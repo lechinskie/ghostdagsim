@@ -35,23 +35,12 @@ typedef struct
     long block_received_bytes;
     long block_sent_bytes;
 
-    long ext_inv_received_bytes;
-    long ext_inv_sent_bytes;
-    long ext_get_headers_received_bytes;
-    long ext_get_headers_sent_bytes;
-    long ext_headers_received_bytes;
-    long ext_headers_sent_bytes;
-    long ext_get_data_received_bytes;
-    long ext_get_data_sent_bytes;
-
     int connections;
     long block_timeouts;
 
     double total_validation_time;
     int max_dag_width_seen;
 
-    int graphene_decode_failures;
-    long graphene_recovery_bytes;
     double mempool_similarity_score;
 } NodeStats;
 
@@ -99,10 +88,6 @@ enum Messages
     GET_BLOCK_BODY, // Requesting tx data for a known header
     BLOCK_BODY,     // The actual transaction list
 
-    GRAPHENE_BLOCK,        // Header + IBLT + Bloom Filter
-    GRAPHENE_GET_RECOVERY, // Requesting full tx list if IBLT fails to decode
-    GRAPHENE_RECOVERY_DATA,
-
     TRANSACTION // Different from linear blockchains, DAGs needs sometimes to receive transaction
                 // for fill mempool, since same transaction can be in 1 or more parallel blocks
 };
@@ -148,13 +133,6 @@ struct Block
         }
 
         return base_header + varint_size + parent_hashes_size;
-    }
-
-    int GetGrapheneSize(int iblt_buckets, int bloom_filter_bits) const
-    {
-        int iblt_size = iblt_buckets * 48;
-        int bf_size = bloom_filter_bits / 8;
-        return GetHeaderSize() + iblt_size + bf_size;
     }
 };
 

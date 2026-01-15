@@ -47,18 +47,6 @@ class GhostDagNode : public Application
     void ReceivedTransactionResponse(std::string& transaction_info, Address& from);
     void ReceivedHeadersResponse(std::string& heaedrs_info, Address& from);
 
-    void ReceivedGrapheneBlockMessage(std::string& block_info, Address& from)
-    {
-        NS_FATAL_ERROR("Not implemented graphene");
-    };
-
-    bool AttemptGrapheneReconstruction(const Block& template_block,
-                                       int estimated_diff,
-                                       std::set<int>& out_missing_txs)
-    {
-        NS_FATAL_ERROR("Not implemented graphene");
-    };
-
     void SendBlock(std::string packet_info, Address& from);
     void SendMessage(enum Messages received_message,
                      enum Messages response_message,
@@ -107,8 +95,6 @@ class GhostDagNode : public Application
                                        //!< compressed blocks
     int m_transaction_index_size;      //!< The transaction index size in bytes. Needed
                                        //!< for compressed blocks
-    bool m_graphene;                   //!< True if the graphene mechanism is used, False
-                                       //!< otherwise
 
     std::vector<Ipv4Address> m_peers_addresses; //!< The addresses of peers
     std::map<Ipv4Address, double>
@@ -145,7 +131,6 @@ class GhostDagNode : public Application
     const int m_inventory_size;      //!< The size of inventories in INV messages,
     const int m_get_headers_size;    //!< The size of the GET_HEADERS message,
     const int m_headers_size;
-    const int m_block_headers_size;
 
     TracedCallback<Ptr<const Packet>, const Address&> m_rx_trace;
 };
