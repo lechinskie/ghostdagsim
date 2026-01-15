@@ -70,15 +70,6 @@ enum ProtocolType
     SEND_HEADERS
 };
 
-/*
- * The Relay protocol to be used by the node when needs to re transmit a block that received.
- **/
-enum RelayProtocolType
-{
-    STARDARD_PROTOCOL,
-    GRAPHENE
-};
-
 enum Region
 {
     NORTH_AMERICA,
@@ -98,24 +89,22 @@ enum MinerType
 
 enum Messages
 {
-    INV,
-    GET_HEADERS,
-    HEADERS,
-    GET_BLOCKS,
-    BLOCK,
-    GET_DATA,
-    NO_MESSAGE,
-    REQUEST_ANTIPAST,
+    INV_RELAY_BLOCK,  // Notification of a new block hash
+    INV_TRANSACTIONS, // Notification of new transactions
 
-    EXT_INV,
-    EXT_GET_HEADERS,
-    EXT_HEADERS,
-    EXT_GET_BLOCKS,
-    EXT_GET_DATA,
+    GET_HEADERS,      // Requesting a range of headers
+    HEADERS,          // Response containing block headers (including parent lists)
+    REQUEST_ANTIPAST, // Specific to GHOSTDAG: fetching blocks in the blue/red sets
 
-    GRAPHENE_BLOCK,
-    GRAPHENE_GET_RECOVERY,
-    GRAPHENE_RECOVERY_DATA
+    GET_BLOCK_BODY, // Requesting tx data for a known header
+    BLOCK_BODY,     // The actual transaction list
+
+    GRAPHENE_BLOCK,        // Header + IBLT + Bloom Filter
+    GRAPHENE_GET_RECOVERY, // Requesting full tx list if IBLT fails to decode
+    GRAPHENE_RECOVERY_DATA,
+
+    TRANSACTION // Different from linear blockchains, DAGs needs sometimes to receive transaction
+                // for fill mempool, since same transaction can be in 1 or more parallel blocks
 };
 
 struct Block
@@ -179,6 +168,7 @@ struct Transaction
 struct Mempool
 {
     std::unordered_map<int, Transaction> pending_txs;
+    std::map<int, double> tx_arrival_times;
 
     void AddTransaction(const Transaction& tx)
     {
@@ -204,6 +194,19 @@ struct Mempool
             ids.insert(id);
         }
         return ids;
+    }
+
+    int GetSymmetricDifference(const std::set<int>& block_txs) const
+    {
+        int diff = 0;
+        for (int tx_id : block_txs)
+        {
+            if (pending_txs.find(tx_id) == pending_txs.end())
+            {
+                diff++;
+            }
+        }
+        return diff;
     }
 };
 
