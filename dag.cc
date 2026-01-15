@@ -37,6 +37,43 @@ Blockchain::AddBlock(const Block& block)
     std::set<int> blue_set = CalculateBlueSet(block.block_id);
     blocks[block.block_id].is_blue = (blue_set.find(block.block_id) != blue_set.end());
     blocks[block.block_id].blue_score = CalculateBlueScore(block.block_id, blue_set);
+    int max_blue_parent = -1;
+    int max_blue_score = -1;
+    for (int parent_id : block.parent_hashes)
+    {
+        if (blocks[parent_id].blue_score > max_blue_score)
+        {
+            max_blue_score = blocks[parent_id].blue_score;
+            max_blue_parent = parent_id;
+        }
+    }
+    blocks[block.block_id].selected_parent = max_blue_parent;
+
+    // Unorphan if needs
+    std::vector<int> to_unorphan;
+    for (auto& orphan_pair : orphans)
+    {
+        bool can_add = true;
+        for (int parent_id : orphan_pair.second.parent_hashes)
+        {
+            if (blocks.find(parent_id) == blocks.end())
+            {
+                can_add = false;
+                break;
+            }
+        }
+        if (can_add)
+        {
+            to_unorphan.push_back(orphan_pair.first);
+        }
+    }
+
+    for (int orphan_id : to_unorphan)
+    {
+        Block orphan_block = orphans[orphan_id];
+        orphans.erase(orphan_id);
+        AddBlock(orphan_block);
+    }
 }
 
 std::set<int>
@@ -93,15 +130,32 @@ Blockchain::GreedyBlueSet(int block_id)
             test_blue.insert(bid);
 
             int anticone_size = 0;
-            for (int blue_block : test_blue)
+            for (auto it1 = test_blue.begin(); it1 != test_blue.end(); ++it1)
             {
-                std::set<int> anticone = GetAnticone(bid, blue_block);
-                for (int ac : anticone)
+                auto it2 = it1;
+                ++it2;
+                for (; it2 != test_blue.end(); ++it2)
                 {
-                    if (test_blue.find(ac) != test_blue.end())
+                    std::set<int> anticone = GetAnticone(*it1, *it2);
+                    for (int ac : anticone)
                     {
-                        anticone_size++;
+                        if (test_blue.find(ac) != test_blue.end())
+                        {
+                            anticone_size++;
+                            if (anticone_size > ghostdag_k)
+                            {
+                                break;
+                            }
+                        }
                     }
+                    if (anticone_size > ghostdag_k)
+                    {
+                        break;
+                    }
+                }
+                if (anticone_size > ghostdag_k)
+                {
+                    break;
                 }
             }
 
@@ -112,7 +166,38 @@ Blockchain::GreedyBlueSet(int block_id)
         }
     }
 
+    // Check if block_id itself can be added to blue set
     int current_anticone_size = 0;
+    for (auto it1 = blue.begin(); it1 != blue.end(); ++it1)
+    {
+        auto it2 = it1;
+        ++it2;
+        for (; it2 != blue.end(); ++it2)
+        {
+            std::set<int> anticone = GetAnticone(*it1, *it2);
+            for (int ac : anticone)
+            {
+                if (blue.find(ac) != blue.end() || ac == block_id)
+                {
+                    current_anticone_size++;
+                    if (current_anticone_size > ghostdag_k)
+                    {
+                        break;
+                    }
+                }
+            }
+            if (current_anticone_size > ghostdag_k)
+            {
+                break;
+            }
+        }
+        if (current_anticone_size > ghostdag_k)
+        {
+            break;
+        }
+    }
+
+    // Also check anticone between block_id and blue blocks
     for (int blue_block : blue)
     {
         std::set<int> anticone = GetAnticone(block_id, blue_block);
@@ -121,7 +206,15 @@ Blockchain::GreedyBlueSet(int block_id)
             if (blue.find(ac) != blue.end())
             {
                 current_anticone_size++;
+                if (current_anticone_size > ghostdag_k)
+                {
+                    break;
+                }
             }
+        }
+        if (current_anticone_size > ghostdag_k)
+        {
+            break;
         }
     }
 
@@ -243,8 +336,16 @@ std::set<int>
 Blockchain::GetAnticone(int block_id, int other_block_id)
 {
     std::set<int> anticone;
+
     std::set<int> past_1 = GetPast(block_id);
     std::set<int> future_1 = GetFuture(block_id);
+
+    if (past_1.find(other_block_id) != past_1.end() ||
+        future_1.find(other_block_id) != future_1.end())
+    {
+        return anticone; // Empty set
+    }
+
     std::set<int> past_2 = GetPast(other_block_id);
     std::set<int> future_2 = GetFuture(other_block_id);
 
@@ -288,6 +389,14 @@ Blockchain::SelectTip()
             max_blue_score = blocks[tip].blue_score;
             selected_tip = tip;
         }
+        else if (blocks[tip].blue_score == max_blue_score && selected_tip != -1)
+        {
+            // Use block_id as tie-breaker for determinism
+            if (tip < selected_tip)
+            {
+                selected_tip = tip;
+            }
+        }
     }
 
     return selected_tip;
@@ -311,7 +420,11 @@ Blockchain::ComputeGHOSTDAGOrdering()
         {
             return blocks[a].blue_score < blocks[b].blue_score;
         }
-        return blocks[a].time_created > blocks[b].time_created;
+        if (blocks[a].time_created != blocks[b].time_created)
+        {
+            return blocks[a].time_created > blocks[b].time_created;
+        }
+        return a > b;
     };
     std::priority_queue<int, std::vector<int>, decltype(cmp)> pq(cmp);
 

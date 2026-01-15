@@ -146,7 +146,6 @@ struct Transaction
 struct Mempool
 {
     std::unordered_map<int, Transaction> pending_txs;
-    std::map<int, double> tx_arrival_times;
 
     void AddTransaction(const Transaction& tx)
     {
@@ -177,6 +176,7 @@ struct Mempool
     int GetSymmetricDifference(const std::set<int>& block_txs) const
     {
         int diff = 0;
+
         for (int tx_id : block_txs)
         {
             if (pending_txs.find(tx_id) == pending_txs.end())
@@ -184,7 +184,54 @@ struct Mempool
                 diff++;
             }
         }
+
+        for (const auto& [tx_id, tx] : pending_txs)
+        {
+            if (block_txs.find(tx_id) == block_txs.end())
+            {
+                diff++;
+            }
+        }
+
         return diff;
+    }
+
+    int GetIntersectionSize(const std::set<int>& block_txs) const
+    {
+        int count = 0;
+        for (int tx_id : block_txs)
+        {
+            if (pending_txs.find(tx_id) != pending_txs.end())
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    bool HasTransaction(int tx_id) const
+    {
+        return pending_txs.find(tx_id) != pending_txs.end();
+    }
+
+    int GetTotalSize() const
+    {
+        int total = 0;
+        for (const auto& [id, tx] : pending_txs)
+        {
+            total += tx.size_bytes;
+        }
+        return total;
+    }
+
+    int GetCount() const
+    {
+        return static_cast<int>(pending_txs.size());
+    }
+
+    void Clear()
+    {
+        pending_txs.clear();
     }
 };
 
@@ -194,6 +241,18 @@ struct Blockchain
         : ghostdag_k(k),
           next_block_id(0)
     {
+        Block genesis;
+        genesis.block_id = GetNextBlockId();
+        genesis.miner_id = -1;
+        genesis.time_created = 0.0;
+        genesis.time_received = 0.0;
+        genesis.size_in_bytes = 0;
+        genesis.blue_score = 1;
+        genesis.is_blue = true;
+        genesis.selected_parent = -1;
+
+        blocks[genesis.block_id] = genesis;
+        tips.insert(genesis.block_id);
     }
 
     virtual ~Blockchain()
@@ -217,7 +276,6 @@ struct Blockchain
     std::vector<const Block*> GetParentsPointers(const Block& block);
 
     void AddBlock(const Block& new_block);
-    void AddOrphan(const Block& new_block);
 
     std::set<int> GetPast(int block_id);
     std::set<int> GetFuture(int block_id);
