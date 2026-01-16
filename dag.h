@@ -50,15 +50,6 @@ typedef struct
     double upload_speed;
 } NodeInternetSpeeds;
 
-/*
- * The Protocol that the node use to advertise a new block
- * */
-enum ProtocolType
-{
-    STANDARD_PROTOCOL,
-    SEND_HEADERS
-};
-
 enum Region
 {
     NORTH_AMERICA,
@@ -78,61 +69,61 @@ enum MinerType
 
 enum Messages
 {
-    INV_RELAY_BLOCK,  // Notification of a new block hash
-    INV_TRANSACTIONS, // Notification of new transactions
+    PING,
+    PONG,
+    ADDRESSES,
+    REQ_ADDRESSES,
 
-    GET_HEADERS,      // Requesting a range of headers
-    HEADERS,          // Response containing block headers (including parent lists)
-    REQUEST_ANTIPAST, // Specific to GHOSTDAG: fetching blocks in the blue/red sets
+    REQ_HEADERS,
+    BLOCK_HEADERS,
 
-    GET_BLOCK_BODY, // Requesting tx data for a known header
-    BLOCK_BODY,     // The actual transaction list
+    REQ_BLOCK_LOCATOR,
+    BLOCK_LOCATOR,
+    IDB_BLOCK_LOCATOR,
 
-    TRANSACTION // Different from linear blockchains, DAGs needs sometimes to receive transaction
-                // for fill mempool, since same transaction can be in 1 or more parallel blocks
+    REQ_BLOCK_BODIES,
+    BLOCK_BODY,
+    REQ_IDB_BLOCKS,
+    IDB_BLOCK,
+
+    INV_RELAY_BLOCK,
+    REQ_RELAY_BLOCK,
+
+    BLOCK,
+
+    INV_TRANSACTIONS,
+    REQ_TRANSACTIONS,
+    TRANSACTION,
+
+    REQ_ANTIPAST,
 };
 
-struct Block
+struct BlockHeader
 {
     int block_id;
     int miner_id;
     double time_created;
-    double time_received;
-    int size_in_bytes;
     std::vector<int> parent_hashes;
-    std::set<int> transactions;
-    int blue_score;
-    bool is_blue;
-    int selected_parent;
-    ns3::Ipv4Address received_from;
-    int hop_count;
 
-    Block()
+    BlockHeader()
         : block_id(0),
           miner_id(0),
-          time_created(0),
-          time_received(0),
-          size_in_bytes(0),
-          blue_score(0),
-          is_blue(false),
-          selected_parent(-1),
-          hop_count(0)
+          time_created(0)
     {
     }
 
-    int GetHeaderSize() const
+    int GetSizeInBytes() const
     {
-        int base_header = 80;
-        int parent_count = parent_hashes.size();
-        int parent_hashes_size = parent_count * 32;
+        int base_size = 80;                          // Standard 80-byte header approximation
+        int parent_size = parent_hashes.size() * 32; // 32 bytes per hash
 
         int varint_size = 1;
-        if (parent_count >= 253)
+        if (parent_hashes.size() >= 253)
         {
             varint_size = 3;
         }
 
-        return base_header + varint_size + parent_hashes_size;
+        return base_size + varint_size + parent_size;
     }
 };
 
@@ -141,6 +132,39 @@ struct Transaction
     int tx_id;
     double arrival_time;
     int size_bytes;
+};
+
+struct Block
+{
+    BlockHeader header;
+    std::set<Transaction> transactions;
+    int size_in_bytes;
+
+    // These help tracks propagation but aren't part of the "protocol"
+    double time_received;
+    ns3::Ipv4Address received_from;
+    int hop_count;
+
+    // GHOSTDAG Consensus Data
+    int blue_score;
+    bool is_blue;
+    int selected_parent;
+
+    Block()
+        : size_in_bytes(0),
+          time_received(0),
+          hop_count(0),
+          blue_score(0),
+          is_blue(false),
+          selected_parent(-1)
+    {
+    }
+
+    int GetTotalSize() const
+    {
+        int body_size = transactions.size() * 4;
+        return header.GetSizeInBytes() + body_size;
+    }
 };
 
 struct Mempool
