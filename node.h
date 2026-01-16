@@ -39,24 +39,22 @@ class GhostDagNode : public Application
     void HandleAccept(Ptr<Socket> socket, const Address& from);
     void HandlePeerClose(Ptr<Socket> socket);
     void HandlePeerError(Ptr<Socket> socket);
+    void DiscoverPeers();
 
     // --- Message Dispatcher ---
-    // Parses the packet string and calls the specific Handle functions below
     void ProcessMessage(enum Messages msg_type, std::string payload, Address& from);
 
-    // --- 1. Real-Time Propagation Handlers (The "Hot" Path) ---
+    // --- 1. Real-Time Propagation Handlers  ---
     void HandleInvRelayBlock(const std::string& block_hash, Address& from);
     void HandleReqRelayBlock(const std::string& block_hash, Address& from);
-    void HandleBlock(const Block& new_block, Address& from); // Processes Header + Body
+    void HandleBlock(const Block& new_block, Address& from);
 
-    // --- 2. Graphene / Mempool Handlers (New for Research) ---
-    // Essential for Graphene: builds the shared state (Mempool) before blocks arrive
+    // --- 2. Mempool management ---
     void HandleInvTransactions(const std::vector<std::string>& tx_hashes, Address& from);
     void HandleReqTransactions(const std::vector<std::string>& tx_hashes, Address& from);
     void HandleTransaction(const Transaction& tx, Address& from);
 
-    // --- 3. GHOSTDAG Topology Handlers (The "Glue") ---
-    // Handles requests for side-blocks (Antipast) missing from the DAG
+    // --- 3. GHOSTDAG Topology Handlers  ---
     void HandleReqAntipast(const std::string& block_hash, Address& from);
     void CheckForMissingParents(const Block& new_block, Address& from);
 
@@ -89,7 +87,7 @@ class GhostDagNode : public Application
     Ptr<Socket> m_socket;
     Address m_local;
     TypeId m_tid;
-    int m_number_of_peers;
+    int m_max_peers;
 
     // Simulation stats
     double m_mean_block_receive_time;
@@ -102,6 +100,7 @@ class GhostDagNode : public Application
     Mempool m_mempool;
     Time m_inv_timeout_minutes;
     bool m_is_miner;
+    bool m_mine_not_synced;
 
     // Network Params
     double m_download_speed;
@@ -123,17 +122,19 @@ class GhostDagNode : public Application
     std::map<std::string, Block> m_only_headers_received;
 
     NodeStats* m_node_stats;
+    NodeState m_node_state;
     std::vector<double> m_send_block_times;
     std::vector<double> m_receive_block_times;
 
-    const int m_ghostdag_port;
-    const int m_seconds_per_min;
-    const int m_count_bytes;
-    const int m_message_header_size;
-    const int m_inventory_size;
-    const int m_get_headers_size;
-    const int m_headers_size;
-    const int m_block_locator_size;
+    int m_ghostdag_port;
+    uint8_t m_ghostdag_k;
+    int m_seconds_per_min;
+    int m_count_bytes;
+    int m_message_header_size;
+    int m_inventory_size;
+    int m_get_headers_size;
+    int m_headers_size;
+    int m_block_locator_size;
 
     TracedCallback<Ptr<const Packet>, const Address&> m_rx_trace;
 };
