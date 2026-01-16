@@ -6,7 +6,7 @@ void
 Blockchain::AddBlock(const Block& block)
 {
     bool is_orphan = false;
-    for (int parent_id : block.parent_hashes)
+    for (int parent_id : block.header.parent_hashes)
     {
         if (blocks.find(parent_id) == blocks.end())
         {
@@ -17,29 +17,30 @@ Blockchain::AddBlock(const Block& block)
 
     if (is_orphan)
     {
-        orphans[block.block_id] = block;
+        orphans[block.header.block_id] = block;
         return;
     }
 
-    blocks[block.block_id] = block;
+    blocks[block.header.block_id] = block;
 
-    for (int parent_id : block.parent_hashes)
+    for (int parent_id : block.header.parent_hashes)
     {
-        children[parent_id].insert(block.block_id);
+        children[parent_id].insert(block.header.block_id);
     }
 
-    for (int parent_id : block.parent_hashes)
+    for (int parent_id : block.header.parent_hashes)
     {
         tips.erase(parent_id);
     }
-    tips.insert(block.block_id);
+    tips.insert(block.header.block_id);
 
-    std::set<int> blue_set = CalculateBlueSet(block.block_id);
-    blocks[block.block_id].is_blue = (blue_set.find(block.block_id) != blue_set.end());
-    blocks[block.block_id].blue_score = CalculateBlueScore(block.block_id, blue_set);
+    std::set<int> blue_set = CalculateBlueSet(block.header.block_id);
+    blocks[block.header.block_id].is_blue =
+        (blue_set.find(block.header.block_id) != blue_set.end());
+    blocks[block.header.block_id].blue_score = CalculateBlueScore(block.header.block_id, blue_set);
     int max_blue_parent = -1;
     int max_blue_score = -1;
-    for (int parent_id : block.parent_hashes)
+    for (int parent_id : block.header.parent_hashes)
     {
         if (blocks[parent_id].blue_score > max_blue_score)
         {
@@ -47,14 +48,14 @@ Blockchain::AddBlock(const Block& block)
             max_blue_parent = parent_id;
         }
     }
-    blocks[block.block_id].selected_parent = max_blue_parent;
+    blocks[block.header.block_id].selected_parent = max_blue_parent;
 
     // Unorphan if needs
     std::vector<int> to_unorphan;
     for (auto& orphan_pair : orphans)
     {
         bool can_add = true;
-        for (int parent_id : orphan_pair.second.parent_hashes)
+        for (int parent_id : orphan_pair.second.header.parent_hashes)
         {
             if (blocks.find(parent_id) == blocks.end())
             {
@@ -97,7 +98,7 @@ Blockchain::GreedyBlueSet(int block_id)
     int max_blue_parent = -1;
     int max_blue_score = -1;
 
-    for (int parent_id : blocks[block_id].parent_hashes)
+    for (int parent_id : blocks[block_id].header.parent_hashes)
     {
         if (blocks[parent_id].blue_score > max_blue_score)
         {
@@ -259,7 +260,7 @@ Blockchain::GetPast(int block_id)
         return past;
     }
 
-    for (int parent_id : blocks[block_id].parent_hashes)
+    for (int parent_id : blocks[block_id].header.parent_hashes)
     {
         to_visit.push(parent_id);
     }
@@ -278,7 +279,7 @@ Blockchain::GetPast(int block_id)
 
         if (blocks.find(current) != blocks.end())
         {
-            for (int parent_id : blocks[current].parent_hashes)
+            for (int parent_id : blocks[current].header.parent_hashes)
             {
                 if (past.find(parent_id) == past.end())
                 {
@@ -412,7 +413,7 @@ Blockchain::ComputeGHOSTDAGOrdering()
 
     for (const auto& pair : blocks)
     {
-        in_degree[pair.first] = pair.second.parent_hashes.size();
+        in_degree[pair.first] = pair.second.header.parent_hashes.size();
     }
 
     auto cmp = [this](int a, int b) {
@@ -420,9 +421,9 @@ Blockchain::ComputeGHOSTDAGOrdering()
         {
             return blocks[a].blue_score < blocks[b].blue_score;
         }
-        if (blocks[a].time_created != blocks[b].time_created)
+        if (blocks[a].header.time_created != blocks[b].header.time_created)
         {
-            return blocks[a].time_created > blocks[b].time_created;
+            return blocks[a].header.time_created > blocks[b].header.time_created;
         }
         return a > b;
     };
@@ -524,7 +525,7 @@ std::vector<const Block*>
 Blockchain::GetChildrenPointers(const Block& block)
 {
     std::vector<const Block*> children_pointers;
-    auto it = children.find(block.block_id);
+    auto it = children.find(block.header.block_id);
     if (it != children.end())
     {
         for (int child_id : it->second)
@@ -543,7 +544,7 @@ std::vector<const Block*>
 Blockchain::GetParentsPointers(const Block& block)
 {
     std::vector<const Block*> parent_pointers;
-    for (int parent_id : block.parent_hashes)
+    for (int parent_id : block.header.parent_hashes)
     {
         auto block_it = blocks.find(parent_id);
         if (block_it != blocks.end())

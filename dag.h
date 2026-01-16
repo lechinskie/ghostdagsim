@@ -44,6 +44,14 @@ typedef struct
     double mempool_similarity_score;
 } NodeStats;
 
+enum NodeState
+{
+    STANDBY,
+    SYNCING_HEADERS,
+    SYNCING_BLOCKS,
+    READY
+};
+
 typedef struct
 {
     double download_speed;
@@ -140,12 +148,10 @@ struct Block
     std::set<Transaction> transactions;
     int size_in_bytes;
 
-    // These help tracks propagation but aren't part of the "protocol"
+    // just metrics popouse, not part of packet
     double time_received;
     ns3::Ipv4Address received_from;
     int hop_count;
-
-    // GHOSTDAG Consensus Data
     int blue_score;
     bool is_blue;
     int selected_parent;
@@ -261,22 +267,22 @@ struct Mempool
 
 struct Blockchain
 {
-    Blockchain(int k)
+    Blockchain(int k = 0)
         : ghostdag_k(k),
           next_block_id(0)
     {
         Block genesis;
-        genesis.block_id = GetNextBlockId();
-        genesis.miner_id = -1;
-        genesis.time_created = 0.0;
+        genesis.header.block_id = GetNextBlockId();
+        genesis.header.miner_id = -1;
+        genesis.header.time_created = 0.0;
         genesis.time_received = 0.0;
         genesis.size_in_bytes = 0;
         genesis.blue_score = 1;
         genesis.is_blue = true;
         genesis.selected_parent = -1;
 
-        blocks[genesis.block_id] = genesis;
-        tips.insert(genesis.block_id);
+        blocks[genesis.header.block_id] = genesis;
+        tips.insert(genesis.header.block_id);
     }
 
     virtual ~Blockchain()
