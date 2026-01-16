@@ -27,6 +27,7 @@ class GhostDagNode : public Application
     void SetPeersUploadSpeeds(const std::map<Ipv4Address, double>& peers_upload_speeds);
     void SetNodeInternetSpeeds(const NodeInternetSpeeds& internet_speeds);
     void SetNodeStats(NodeStats* node_stats);
+    void ConnectToPeer(Ipv4Address peerIp, uint16_t port);
 
   protected:
     // --- Application Lifecycle ---
@@ -40,6 +41,8 @@ class GhostDagNode : public Application
     void HandlePeerClose(Ptr<Socket> socket);
     void HandlePeerError(Ptr<Socket> socket);
     void DiscoverPeers();
+    EventId m_pingEvent;
+    void PingPeers();
 
     // --- Message Dispatcher ---
     void ProcessMessage(enum Messages msg_type, std::string payload, Address& from);
@@ -88,6 +91,8 @@ class GhostDagNode : public Application
     Address m_local;
     TypeId m_tid;
     int m_max_peers;
+
+    EventId m_discoveryEvent;
 
     // Simulation stats
     double m_mean_block_receive_time;

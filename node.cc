@@ -1,14 +1,14 @@
-#pragma once
-
 #include "node.h"
 
 #include "ns3/address.h"
 #include "ns3/boolean.h"
 #include "ns3/double.h"
 #include "ns3/nstime.h"
+#include "ns3/simulator.h"
 #include "ns3/tcp-socket-factory.h"
 #include "ns3/uinteger.h"
 
+#include <algorithm>
 #include <cstdint>
 
 namespace ns3
@@ -26,7 +26,7 @@ GhostDagNode::GetTypeId()
             .SetParent<Application>()
             .SetGroupName("Applications")
             .AddConstructor<GhostDagNode>()
-            .AddAttribute("K ghostdag",
+            .AddAttribute("Kghostdag",
                           "The K value for dreedy algorithm ghostdag",
                           UintegerValue(10),
                           MakeUintegerAccessor(&GhostDagNode::m_ghostdag_k),
@@ -96,6 +96,8 @@ GhostDagNode::GhostDagNode()
     m_get_headers_size = 72;
     m_headers_size = 81;
     m_block_locator_size = 81;
+
+    m_tid = TcpSocketFactory::GetTypeId();
 }
 
 GhostDagNode::~GhostDagNode()
@@ -184,7 +186,6 @@ GhostDagNode::StartApplication()
         m_socket = Socket::CreateSocket(GetNode(), m_tid);
         m_socket->Bind(m_local);
         m_socket->Listen();
-        m_socket->ShutdownSend();
     }
 
     m_socket->SetRecvCallback(MakeCallback(&GhostDagNode::HandleRead, this));
@@ -209,13 +210,41 @@ GhostDagNode::StartApplication()
         m_node_stats->connections = m_peers_addresses.size();
     }
 
-    DiscoverPeers();
+    m_discoveryEvent = Simulator::Schedule(Seconds(3.0), &GhostDagNode::DiscoverPeers, this);
+
+    m_pingEvent = Simulator::Schedule(Seconds(1.0), &GhostDagNode::PingPeers, this);
+}
+
+void
+GhostDagNode::PingPeers()
+{
+    if (m_peers_sockets.empty())
+    {
+        NS_LOG_INFO("Node " << GetNode()->GetId() << " has no peers to ping");
+    }
+    else
+    {
+        NS_LOG_INFO("Node " << GetNode()->GetId() << " pinging peers");
+    }
+    for (auto& kv : m_peers_sockets)
+    {
+        Address addr;
+        kv.second->GetPeerName(addr);
+        SendMessage(PING, "", addr);
+    }
+
+    // Repeat every 5 seconds
+    m_pingEvent = Simulator::Schedule(Seconds(1.0), &GhostDagNode::PingPeers, this);
 }
 
 void
 GhostDagNode::StopApplication()
 {
     NS_LOG_FUNCTION(this);
+    if (m_discoveryEvent.IsPending())
+    {
+        Simulator::Cancel(m_discoveryEvent);
+    }
 
     for (auto& socket_pair : m_peers_sockets)
     {
@@ -240,6 +269,250 @@ GhostDagNode::StopApplication()
         m_node_stats->mean_block_receive_time = m_mean_block_receive_time;
         m_node_stats->mean_block_propagation_time = m_mean_block_propagation_time;
         m_node_stats->total_blocks = m_blockchain.blocks.size();
+    }
+}
+
+void
+GhostDagNode::SendMessage(enum Messages type, std::string payload, Address& to)
+{
+    std::ostringstream oss;
+    oss << static_cast<uint8_t>(type) << payload;
+    std::string data = oss.str();
+
+    Ptr<Packet> packet = Create<Packet>((uint8_t*)data.c_str(), data.size());
+
+    InetSocketAddress peer = InetSocketAddress::ConvertFrom(to);
+    Ipv4Address ip = peer.GetIpv4();
+    auto it = m_peers_sockets.find(ip);
+
+    if (it == m_peers_sockets.end())
+    {
+        m_peers_sockets[ip] = Socket::CreateSocket(GetNode(), TcpSocketFactory::GetTypeId());
+        m_peers_sockets[ip]->Connect(InetSocketAddress(ip, m_ghostdag_port));
+    }
+
+    m_peers_sockets[ip]->Send(packet);
+}
+
+void
+GhostDagNode::HandleRead(Ptr<Socket> socket)
+{
+    Address from;
+    Ptr<Packet> packet;
+
+    while ((packet = socket->RecvFrom(from)))
+    {
+        NS_LOG_INFO("RECEIVED PACKET FROM " << from);
+        m_rx_trace(packet, from);
+
+        uint32_t size = packet->GetSize();
+        std::vector<uint8_t> buffer(size);
+        packet->CopyData(buffer.data(), size);
+
+        auto msg_type = static_cast<Messages>(buffer[0]);
+        std::string payload(buffer.begin() + 1, buffer.end());
+
+        NS_LOG_INFO(payload << " " << msg_type);
+        ProcessMessage(msg_type, payload, from);
+    }
+}
+
+void
+GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload, Address& from)
+{
+    switch (msg_type)
+    {
+    case PING:
+        NS_LOG_INFO("Node " << GetNode()->GetId() << " <- PING → PONG");
+        SendMessage(PONG, "", from);
+        break;
+
+    case PONG:
+        NS_LOG_INFO("Node " << GetNode()->GetId() << " <- PONG");
+        break;
+
+    case REQ_ADDRESSES: {
+        std::ostringstream oss;
+        int sent = 0;
+
+        for (auto& ip : m_peers_addresses)
+        {
+            if (sent >= m_max_peers)
+            {
+                break;
+            }
+            oss << ip << ",";
+            sent++;
+        }
+
+        NS_LOG_INFO("Node " << GetNode()->GetId() << " sending " << sent << " addresses");
+
+        SendMessage(ADDRESSES, oss.str(), from);
+        break;
+    }
+
+    case ADDRESSES: {
+        std::stringstream ss(payload);
+        std::string ipStr;
+        NS_LOG_INFO("received address " << m_local << " from " << from);
+
+        while (std::getline(ss, ipStr, ','))
+        {
+            if (ipStr.empty())
+            {
+                continue;
+            }
+
+            if ((int)m_peers_addresses.size() >= m_max_peers)
+            {
+                break;
+            }
+
+            Ipv4Address ip(ipStr.c_str());
+
+            if (m_peers_sockets.count(ip))
+            {
+                continue;
+            }
+
+            if (std::find(m_peers_addresses.begin(), m_peers_addresses.end(), ip) !=
+                m_peers_addresses.end())
+            {
+                continue;
+            }
+
+            NS_LOG_INFO("Node " << GetNode()->GetId() << " discovered new peer " << ip);
+
+            m_peers_addresses.push_back(ip);
+            ConnectToPeer(ip, m_ghostdag_port);
+        }
+        break;
+    }
+
+    default:
+        break;
+    }
+}
+
+void
+GhostDagNode::DiscoverPeers()
+{
+    if ((int)m_peers_addresses.size() >= m_max_peers)
+    {
+        NS_LOG_INFO("Node " << GetNode()->GetId() << " has max peers, skipping discovery");
+        m_discoveryEvent = Simulator::Schedule(Seconds(32), &GhostDagNode::DiscoverPeers, this);
+        return;
+    }
+
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " running peer discovery");
+
+    for (auto& ip : m_peers_addresses)
+    {
+        auto addr = InetSocketAddress(ip, m_ghostdag_port).ConvertTo();
+
+        SendMessage(REQ_ADDRESSES, "", addr);
+        NS_LOG_INFO("Node " << GetNode()->GetId() << " sent req address" << " to " << addr);
+    }
+
+    m_discoveryEvent = Simulator::Schedule(Seconds(5), &GhostDagNode::DiscoverPeers, this);
+}
+
+void
+GhostDagNode::ConnectToPeer(Ipv4Address peerIp, uint16_t port)
+{
+    NS_LOG_INFO("CONNECTION TO PEER: " << peerIp);
+    if ((int)m_peers_addresses.size() >= m_max_peers)
+    {
+        return;
+    }
+
+    if (m_peers_sockets.count(peerIp))
+    {
+        return;
+    }
+
+    Ptr<Socket> socket = Socket::CreateSocket(GetNode(), TcpSocketFactory::GetTypeId());
+    socket->SetRecvCallback(MakeCallback(&GhostDagNode::HandleRead, this));
+    socket->SetCloseCallbacks(MakeCallback(&GhostDagNode::HandlePeerClose, this),
+                              MakeCallback(&GhostDagNode::HandlePeerError, this));
+
+    InetSocketAddress remote(peerIp, m_ghostdag_port);
+    socket->Connect(remote);
+
+    m_peers_sockets[peerIp] = socket;
+
+    if (std::find(m_peers_addresses.begin(), m_peers_addresses.end(), peerIp) ==
+        m_peers_addresses.end())
+    {
+        m_peers_addresses.push_back(peerIp);
+    }
+}
+
+void
+GhostDagNode::HandlePeerClose(Ptr<Socket> socket)
+{
+    NS_LOG_FUNCTION(this << socket);
+
+    for (auto it = m_peers_sockets.begin(); it != m_peers_sockets.end(); ++it)
+    {
+        if (it->second == socket)
+        {
+            Ipv4Address ip = it->first;
+            NS_LOG_INFO("Node " << GetNode()->GetId() << " peer closed: " << ip);
+
+            m_peers_sockets.erase(it);
+            m_peers_download_speeds.erase(ip);
+            m_peers_upload_speeds.erase(ip);
+            break;
+        }
+    }
+}
+
+void
+GhostDagNode::HandlePeerError(Ptr<Socket> socket)
+{
+    NS_LOG_FUNCTION(this << socket);
+
+    for (auto it = m_peers_sockets.begin(); it != m_peers_sockets.end(); ++it)
+    {
+        if (it->second == socket)
+        {
+            Ipv4Address ip = it->first;
+            NS_LOG_WARN("Node " << GetNode()->GetId() << " peer error: " << ip);
+
+            it->second->Close();
+            m_peers_sockets.erase(it);
+            m_peers_download_speeds.erase(ip);
+            m_peers_upload_speeds.erase(ip);
+            break;
+        }
+    }
+}
+
+void
+GhostDagNode::HandleAccept(Ptr<Socket> s, const Address& from)
+{
+    InetSocketAddress peer = InetSocketAddress::ConvertFrom(from);
+    Ipv4Address ip = peer.GetIpv4();
+
+    if ((int)m_peers_addresses.size() >= m_max_peers)
+    {
+        s->Close();
+        return;
+    }
+
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " accepted peer " << ip);
+
+    s->SetRecvCallback(MakeCallback(&GhostDagNode::HandleRead, this));
+    s->SetCloseCallbacks(MakeCallback(&GhostDagNode::HandlePeerClose, this),
+                         MakeCallback(&GhostDagNode::HandlePeerError, this));
+
+    m_peers_sockets[ip] = s;
+
+    if (std::find(m_peers_addresses.begin(), m_peers_addresses.end(), ip) ==
+        m_peers_addresses.end())
+    {
+        m_peers_addresses.push_back(ip);
     }
 }
 
