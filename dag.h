@@ -77,10 +77,9 @@ enum MinerType
 
 enum Messages
 {
+    NO_MESSAGE,
     PING,
     PONG,
-    ADDRESSES,
-    REQ_ADDRESSES,
 
     REQ_HEADERS,
     BLOCK_HEADERS,
@@ -105,6 +104,54 @@ enum Messages
 
     REQ_ANTIPAST,
 };
+
+inline static std::string
+GetMessageName(Messages msg)
+{
+    switch (msg)
+    {
+    case NO_MESSAGE:
+        return "NO_MESSAGE";
+    case PING:
+        return "PING";
+    case PONG:
+        return "PONG";
+    case REQ_HEADERS:
+        return "REQ_HEADERS";
+    case BLOCK_HEADERS:
+        return "BLOCK_HEADERS";
+    case REQ_BLOCK_LOCATOR:
+        return "REQ_BLOCK_LOCATOR";
+    case BLOCK_LOCATOR:
+        return "BLOCK_LOCATOR";
+    case IDB_BLOCK_LOCATOR:
+        return "IDB_BLOCK_LOCATOR";
+    case REQ_BLOCK_BODIES:
+        return "REQ_BLOCK_BODIES";
+    case BLOCK_BODY:
+        return "BLOCK_BODY";
+    case REQ_IDB_BLOCKS:
+        return "REQ_IDB_BLOCKS";
+    case IDB_BLOCK:
+        return "IDB_BLOCK";
+    case INV_RELAY_BLOCK:
+        return "INV_RELAY_BLOCK";
+    case REQ_RELAY_BLOCK:
+        return "REQ_RELAY_BLOCK";
+    case BLOCK:
+        return "BLOCK";
+    case INV_TRANSACTIONS:
+        return "INV_TRANSACTIONS";
+    case REQ_TRANSACTIONS:
+        return "REQ_TRANSACTIONS";
+    case TRANSACTION:
+        return "TRANSACTION";
+    case REQ_ANTIPAST:
+        return "REQ_ANTIPAST";
+    default:
+        return "UNKNOWN_MESSAGE";
+    }
+}
 
 struct BlockHeader
 {

@@ -27,7 +27,6 @@ class GhostDagNode : public Application
     void SetPeersUploadSpeeds(const std::map<Ipv4Address, double>& peers_upload_speeds);
     void SetNodeInternetSpeeds(const NodeInternetSpeeds& internet_speeds);
     void SetNodeStats(NodeStats* node_stats);
-    void ConnectToPeer(Ipv4Address peerIp, uint16_t port);
 
   protected:
     // --- Application Lifecycle ---
@@ -37,12 +36,11 @@ class GhostDagNode : public Application
 
     // --- Socket & Connection Handling ---
     void HandleRead(Ptr<Socket> socket);
+
     void HandleAccept(Ptr<Socket> socket, const Address& from);
     void HandlePeerClose(Ptr<Socket> socket);
     void HandlePeerError(Ptr<Socket> socket);
-    void DiscoverPeers();
-    EventId m_pingEvent;
-    void PingPeers();
+    bool HandleConnectionRequest(Ptr<Socket> s, const Address& from);
 
     // --- Message Dispatcher ---
     void ProcessMessage(enum Messages msg_type, std::string payload, Address& from);
@@ -68,7 +66,7 @@ class GhostDagNode : public Application
     void HandleBlockBody(const std::set<Transaction>& body, Address& from);
 
     // --- Sending Helpers ---
-    void SendMessage(enum Messages type, std::string payload, Address& to);
+    void SendMessage(enum Messages recv, enum Messages type, std::string payload, Address& to);
     void BroadcastInvBlock(const std::string& block_hash);
     void BroadcastInvTransaction(const std::string& tx_hash);
 
@@ -87,12 +85,12 @@ class GhostDagNode : public Application
     void RemoveSendTime();
     void RemoveReceiveTime();
 
+    void PingPeers();
+    EventId m_ping_event;
+
     Ptr<Socket> m_socket;
     Address m_local;
     TypeId m_tid;
-    int m_max_peers;
-
-    EventId m_discoveryEvent;
 
     // Simulation stats
     double m_mean_block_receive_time;
