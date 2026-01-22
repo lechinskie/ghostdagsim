@@ -1,15 +1,23 @@
 #include "node.h"
 
+#include "dag.h"
+#include "json.h"
+
+#include "ns3/address-utils.h"
 #include "ns3/address.h"
 #include "ns3/boolean.h"
 #include "ns3/double.h"
 #include "ns3/nstime.h"
 #include "ns3/simulator.h"
 #include "ns3/tcp-socket-factory.h"
+#include "ns3/udp-socket.h"
 #include "ns3/uinteger.h"
 
-#include <algorithm>
 #include <cstdint>
+#include <fmt/format.h>
+#include <string>
+
+#define MSG_DELIMITER '#'
 
 namespace ns3
 {
@@ -51,11 +59,6 @@ GhostDagNode::GetTypeId()
                           TimeValue(Minutes(20)),
                           MakeTimeAccessor(&GhostDagNode::m_inv_timeout_minutes),
                           MakeTimeChecker())
-            .AddAttribute("MaxPeers",
-                          "The max numbers of peers a node should have discovering",
-                          UintegerValue(32),
-                          MakeUintegerAccessor(&GhostDagNode::m_max_peers),
-                          MakeUintegerChecker<uint8_t>())
             .AddAttribute("DownloadSpeed",
                           "The download speed of the node in Bytes/s.",
                           DoubleValue(1000000.0),
@@ -85,7 +88,6 @@ GhostDagNode::GhostDagNode()
     m_previous_block_receive_time = 0;
     m_mean_block_propagation_time = 0;
     m_mean_block_size = 0;
-    m_max_peers = 32;
 
     m_ghostdag_port = 16443;
     m_ghostdag_k = 10;
@@ -184,13 +186,28 @@ GhostDagNode::StartApplication()
     if (!m_socket)
     {
         m_socket = Socket::CreateSocket(GetNode(), m_tid);
-        m_socket->Bind(m_local);
+        InetSocketAddress local = InetSocketAddress(Ipv4Address::GetAny(), m_ghostdag_port);
+        m_socket->Bind(local);
         m_socket->Listen();
+
+        if (addressUtils::IsMulticast(m_local))
+        {
+            Ptr<UdpSocket> udpSocket = DynamicCast<UdpSocket>(m_socket);
+            if (udpSocket)
+            {
+                udpSocket->MulticastJoinGroup(0, local);
+            }
+            else
+            {
+                NS_FATAL_ERROR("Error: joining multicast on a non-UDP socket");
+            }
+        }
     }
 
     m_socket->SetRecvCallback(MakeCallback(&GhostDagNode::HandleRead, this));
-    m_socket->SetAcceptCallback(MakeNullCallback<bool, Ptr<Socket>, const Address&>(),
+    m_socket->SetAcceptCallback(MakeCallback(&GhostDagNode::HandleConnectionRequest, this),
                                 MakeCallback(&GhostDagNode::HandleAccept, this));
+
     m_socket->SetCloseCallbacks(MakeCallback(&GhostDagNode::HandlePeerClose, this),
                                 MakeCallback(&GhostDagNode::HandlePeerError, this));
 
@@ -209,43 +226,17 @@ GhostDagNode::StartApplication()
         m_node_stats->total_blocks = 0;
         m_node_stats->connections = m_peers_addresses.size();
     }
-
-    m_discoveryEvent = Simulator::Schedule(Seconds(3.0), &GhostDagNode::DiscoverPeers, this);
-
-    m_pingEvent = Simulator::Schedule(Seconds(1.0), &GhostDagNode::PingPeers, this);
-}
-
-void
-GhostDagNode::PingPeers()
-{
-    if (m_peers_sockets.empty())
-    {
-        NS_LOG_INFO("Node " << GetNode()->GetId() << " has no peers to ping");
-    }
-    else
-    {
-        NS_LOG_INFO("Node " << GetNode()->GetId() << " pinging peers");
-    }
-    for (auto& kv : m_peers_sockets)
-    {
-        Address addr;
-        kv.second->GetPeerName(addr);
-        SendMessage(PING, "", addr);
-    }
-
-    // Repeat every 5 seconds
-    m_pingEvent = Simulator::Schedule(Seconds(1.0), &GhostDagNode::PingPeers, this);
+    m_ping_event = Simulator::Schedule(Seconds(10.0), &GhostDagNode::PingPeers, this);
 }
 
 void
 GhostDagNode::StopApplication()
 {
-    NS_LOG_FUNCTION(this);
-    if (m_discoveryEvent.IsPending())
+    if (m_ping_event.IsPending())
     {
-        Simulator::Cancel(m_discoveryEvent);
+        Simulator::Cancel(m_ping_event);
     }
-
+    NS_LOG_FUNCTION(this);
     for (auto& socket_pair : m_peers_sockets)
     {
         socket_pair.second->Close();
@@ -273,13 +264,62 @@ GhostDagNode::StopApplication()
 }
 
 void
-GhostDagNode::SendMessage(enum Messages type, std::string payload, Address& to)
+GhostDagNode::HandleRead(Ptr<Socket> socket)
 {
-    std::ostringstream oss;
-    oss << static_cast<uint8_t>(type) << payload;
-    std::string data = oss.str();
+    Address from;
+    Ptr<Packet> packet;
 
-    Ptr<Packet> packet = Create<Packet>((uint8_t*)data.c_str(), data.size());
+    while ((packet = socket->RecvFrom(from)))
+    {
+        if (packet->GetSize() == 0)
+        {
+            break;
+        }
+
+        std::vector<uint8_t> buf(packet->GetSize());
+        packet->CopyData(buf.data(), packet->GetSize());
+        std::string new_data(buf.begin(), buf.end());
+
+        m_buffered_data[from] += new_data;
+
+        size_t pos = 0;
+        while ((pos = m_buffered_data[from].find(MSG_DELIMITER)) != std::string::npos)
+        {
+            std::string parsed_packet = m_buffered_data[from].substr(0, pos);
+
+            m_buffered_data[from].erase(0, pos + 1);
+
+            auto data = nlohmann::json::parse(parsed_packet, nullptr, false);
+            if (data.is_discarded())
+            {
+                m_buffered_data[from].erase(0, pos + 1);
+                continue;
+            }
+
+            int msg_data = data.value("msg", -1);
+            if (msg_data != -1)
+            {
+                NS_LOG_INFO("At time " << Simulator::Now().GetSeconds() << "s ghostdag node "
+                                       << GetNode()->GetId() << " received " << packet->GetSize()
+                                       << " bytes from "
+                                       << InetSocketAddress::ConvertFrom(from).GetIpv4() << " port "
+                                       << InetSocketAddress::ConvertFrom(from).GetPort()
+                                       << " with info = " << data.dump(4));
+                ProcessMessage((enum Messages)msg_data, parsed_packet, from);
+            }
+            else
+            {
+                m_buffered_data[from].erase(0, pos + 1);
+            }
+        }
+    }
+}
+
+void
+GhostDagNode::SendMessage(enum Messages recv, enum Messages type, std::string payload, Address& to)
+{
+    Ptr<Packet> packet = Create<Packet>((uint8_t*)payload.c_str(), payload.size());
+    const uint8_t buf[] = {MSG_DELIMITER};
 
     InetSocketAddress peer = InetSocketAddress::ConvertFrom(to);
     Ipv4Address ip = peer.GetIpv4();
@@ -289,31 +329,12 @@ GhostDagNode::SendMessage(enum Messages type, std::string payload, Address& to)
     {
         m_peers_sockets[ip] = Socket::CreateSocket(GetNode(), TcpSocketFactory::GetTypeId());
         m_peers_sockets[ip]->Connect(InetSocketAddress(ip, m_ghostdag_port));
+        return;
     }
 
-    m_peers_sockets[ip]->Send(packet);
-}
-
-void
-GhostDagNode::HandleRead(Ptr<Socket> socket)
-{
-    Address from;
-    Ptr<Packet> packet;
-
-    while ((packet = socket->RecvFrom(from)))
+    if (m_peers_sockets[ip]->Send(packet) > 0)
     {
-        NS_LOG_INFO("RECEIVED PACKET FROM " << from);
-        m_rx_trace(packet, from);
-
-        uint32_t size = packet->GetSize();
-        std::vector<uint8_t> buffer(size);
-        packet->CopyData(buffer.data(), size);
-
-        auto msg_type = static_cast<Messages>(buffer[0]);
-        std::string payload(buffer.begin() + 1, buffer.end());
-
-        NS_LOG_INFO(payload << " " << msg_type);
-        ProcessMessage(msg_type, payload, from);
+        m_peers_sockets[ip]->Send(buf, 1, 0);
     }
 }
 
@@ -322,198 +343,73 @@ GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload, Addres
 {
     switch (msg_type)
     {
-    case PING:
+    case PING: {
         NS_LOG_INFO("Node " << GetNode()->GetId() << " <- PING → PONG");
-        SendMessage(PONG, "", from);
-        break;
+        nlohmann::json d;
+        d["msg"] = PONG;
+        d["whoami"] = std::to_string(GetNode()->GetId());
 
+        SendMessage(PING, PONG, d.dump(), from);
+        break;
+    }
     case PONG:
-        NS_LOG_INFO("Node " << GetNode()->GetId() << " <- PONG");
+        NS_LOG_INFO("Node " << GetNode()->GetId() << " <- PONG from " << from);
         break;
-
-    case REQ_ADDRESSES: {
-        std::ostringstream oss;
-        int sent = 0;
-
-        for (auto& ip : m_peers_addresses)
-        {
-            if (sent >= m_max_peers)
-            {
-                break;
-            }
-            oss << ip << ",";
-            sent++;
-        }
-
-        NS_LOG_INFO("Node " << GetNode()->GetId() << " sending " << sent << " addresses");
-
-        SendMessage(ADDRESSES, oss.str(), from);
-        break;
-    }
-
-    case ADDRESSES: {
-        std::stringstream ss(payload);
-        std::string ipStr;
-        NS_LOG_INFO("received address " << m_local << " from " << from);
-
-        while (std::getline(ss, ipStr, ','))
-        {
-            if (ipStr.empty())
-            {
-                continue;
-            }
-
-            if ((int)m_peers_addresses.size() >= m_max_peers)
-            {
-                break;
-            }
-
-            Ipv4Address ip(ipStr.c_str());
-
-            if (m_peers_sockets.count(ip))
-            {
-                continue;
-            }
-
-            if (std::find(m_peers_addresses.begin(), m_peers_addresses.end(), ip) !=
-                m_peers_addresses.end())
-            {
-                continue;
-            }
-
-            NS_LOG_INFO("Node " << GetNode()->GetId() << " discovered new peer " << ip);
-
-            m_peers_addresses.push_back(ip);
-            ConnectToPeer(ip, m_ghostdag_port);
-        }
-        break;
-    }
-
     default:
+        NS_LOG_ERROR("Node: " << GetNode()->GetId() << " Received not know message: " << payload);
         break;
     }
 }
 
 void
-GhostDagNode::DiscoverPeers()
+GhostDagNode::PingPeers()
 {
-    if ((int)m_peers_addresses.size() >= m_max_peers)
+    if (m_peers_sockets.empty())
     {
-        NS_LOG_INFO("Node " << GetNode()->GetId() << " has max peers, skipping discovery");
-        m_discoveryEvent = Simulator::Schedule(Seconds(32), &GhostDagNode::DiscoverPeers, this);
-        return;
+        NS_LOG_INFO("Node " << GetNode()->GetId() << " has no peers to ping");
+    }
+    else
+    {
+        NS_LOG_INFO("Node " << GetNode()->GetId() << " pinging peers");
+    }
+    for (const auto& ipv4 : m_peers_addresses)
+    {
+        auto sk = InetSocketAddress(ipv4, m_ghostdag_port);
+        auto addr = Address(sk);
+        nlohmann::json d;
+        d["msg"] = PING;
+        d["whoami"] = std::to_string(GetNode()->GetId());
+
+        SendMessage(NO_MESSAGE, PING, d.dump(), addr);
     }
 
-    NS_LOG_INFO("Node " << GetNode()->GetId() << " running peer discovery");
-
-    for (auto& ip : m_peers_addresses)
-    {
-        auto addr = InetSocketAddress(ip, m_ghostdag_port).ConvertTo();
-
-        SendMessage(REQ_ADDRESSES, "", addr);
-        NS_LOG_INFO("Node " << GetNode()->GetId() << " sent req address" << " to " << addr);
-    }
-
-    m_discoveryEvent = Simulator::Schedule(Seconds(5), &GhostDagNode::DiscoverPeers, this);
+    m_ping_event = Simulator::Schedule(Minutes(1.0), &GhostDagNode::PingPeers, this);
 }
 
-void
-GhostDagNode::ConnectToPeer(Ipv4Address peerIp, uint16_t port)
+bool
+GhostDagNode::HandleConnectionRequest(Ptr<Socket> s, const Address& from)
 {
-    NS_LOG_INFO("CONNECTION TO PEER: " << peerIp);
-    if ((int)m_peers_addresses.size() >= m_max_peers)
-    {
-        return;
-    }
-
-    if (m_peers_sockets.count(peerIp))
-    {
-        return;
-    }
-
-    Ptr<Socket> socket = Socket::CreateSocket(GetNode(), TcpSocketFactory::GetTypeId());
-    socket->SetRecvCallback(MakeCallback(&GhostDagNode::HandleRead, this));
-    socket->SetCloseCallbacks(MakeCallback(&GhostDagNode::HandlePeerClose, this),
-                              MakeCallback(&GhostDagNode::HandlePeerError, this));
-
-    InetSocketAddress remote(peerIp, m_ghostdag_port);
-    socket->Connect(remote);
-
-    m_peers_sockets[peerIp] = socket;
-
-    if (std::find(m_peers_addresses.begin(), m_peers_addresses.end(), peerIp) ==
-        m_peers_addresses.end())
-    {
-        m_peers_addresses.push_back(peerIp);
-    }
+    NS_LOG_DEBUG("Node " << GetNode()->GetId() << " accepting connection from " << from);
+    return true; // Explicitly accept the connection
 }
 
 void
 GhostDagNode::HandlePeerClose(Ptr<Socket> socket)
 {
     NS_LOG_FUNCTION(this << socket);
-
-    for (auto it = m_peers_sockets.begin(); it != m_peers_sockets.end(); ++it)
-    {
-        if (it->second == socket)
-        {
-            Ipv4Address ip = it->first;
-            NS_LOG_INFO("Node " << GetNode()->GetId() << " peer closed: " << ip);
-
-            m_peers_sockets.erase(it);
-            m_peers_download_speeds.erase(ip);
-            m_peers_upload_speeds.erase(ip);
-            break;
-        }
-    }
 }
 
 void
 GhostDagNode::HandlePeerError(Ptr<Socket> socket)
 {
     NS_LOG_FUNCTION(this << socket);
-
-    for (auto it = m_peers_sockets.begin(); it != m_peers_sockets.end(); ++it)
-    {
-        if (it->second == socket)
-        {
-            Ipv4Address ip = it->first;
-            NS_LOG_WARN("Node " << GetNode()->GetId() << " peer error: " << ip);
-
-            it->second->Close();
-            m_peers_sockets.erase(it);
-            m_peers_download_speeds.erase(ip);
-            m_peers_upload_speeds.erase(ip);
-            break;
-        }
-    }
 }
 
 void
 GhostDagNode::HandleAccept(Ptr<Socket> s, const Address& from)
 {
-    InetSocketAddress peer = InetSocketAddress::ConvertFrom(from);
-    Ipv4Address ip = peer.GetIpv4();
-
-    if ((int)m_peers_addresses.size() >= m_max_peers)
-    {
-        s->Close();
-        return;
-    }
-
-    NS_LOG_INFO("Node " << GetNode()->GetId() << " accepted peer " << ip);
-
+    NS_LOG_FUNCTION(this << s << from);
     s->SetRecvCallback(MakeCallback(&GhostDagNode::HandleRead, this));
-    s->SetCloseCallbacks(MakeCallback(&GhostDagNode::HandlePeerClose, this),
-                         MakeCallback(&GhostDagNode::HandlePeerError, this));
-
-    m_peers_sockets[ip] = s;
-
-    if (std::find(m_peers_addresses.begin(), m_peers_addresses.end(), ip) ==
-        m_peers_addresses.end())
-    {
-        m_peers_addresses.push_back(ip);
-    }
 }
 
 } // namespace ns3
