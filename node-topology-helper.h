@@ -66,15 +66,6 @@ public:
   void AssignIpv4Addresses(Ipv4AddressHelperCustom ip);
 
   /**
-   * \brief Set node positions for visualization
-   * \param ulx Upper left x coordinate
-   * \param uly Upper left y coordinate
-   * \param lrx Lower right x coordinate
-   * \param lry Lower right y coordinate
-   */
-  void BoundingBox(double ulx, double uly, double lrx, double lry);
-
-  /**
    * \brief Get all IPv4 interface containers
    * \return Container with all interfaces
    */
