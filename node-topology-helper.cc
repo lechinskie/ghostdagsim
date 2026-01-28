@@ -1255,7 +1255,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
   }
 
   // Print the nodes with fewer than required connections
-  if (m_systemId == 0) {
+  /*if (m_systemId == 0) {
     for (uint32_t i = 0; i < m_totalNoNodes; i++) {
       if (m_nodesConnections[i].size() <
           static_cast<size_t>(m_minConnections[i]))
@@ -1263,8 +1263,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
                   << m_minConnections[i] << " connections but it has only "
                   << m_nodesConnections[i].size() << " connections\n";
     }
-  }
-
+  } */
   /*   //Print the nodes' connections
     if (m_systemId == 0)
     {
