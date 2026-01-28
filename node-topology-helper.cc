@@ -690,7 +690,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper (uint32_t noCpus, uint32_t totalN
   m_australiaUploadBandwidthDistribution = std::piecewise_constant_distribution<double> (uploadBandwitdhIntervals.begin(), uploadBandwitdhIntervals.end(), AustraliaUploadWeights.begin());
 
   m_minersRegions = new enum Region[m_noMiners];
-  for (int i = 0; i < m_noMiners; i++)
+  for (uint32_t i = 0; i < m_noMiners; i++)
   {
     m_minersRegions[i] = minersRegions[i];
   }
@@ -699,7 +699,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper (uint32_t noCpus, uint32_t totalN
    * Create a vector containing all the nodes ids
    */
   nodes.reserve(m_totalNoNodes);
-for (int i = 0; i < m_totalNoNodes; i++)
+for (uint32_t i = 0; i < m_totalNoNodes; i++)
   {
     nodes.push_back(i);
   }
@@ -715,7 +715,7 @@ for (int i = 0; i < m_totalNoNodes; i++)
 
   //Choose the miners randomly. They should be unique (no miner should be chosen twice).
   //So, remove each chose miner from nodes vector
-  for (int i = 0; i < noMiners; i++)
+  for (uint32_t i = 0; i < noMiners; i++)
   {
     uint32_t index = rand() % nodes.size();
     m_miners.push_back(nodes[index]);
@@ -778,13 +778,13 @@ for (int i = 0; i < m_totalNoNodes; i++)
   //nodes contain the ids of the nodes
   nodes.clear();
 
-  for (int i = 0; i < m_totalNoNodes; i++)
+  for (uint32_t i = 0; i < m_totalNoNodes; i++)
   {
     nodes.push_back(i);
   }
 
 
-  for(int i = 0; i < m_totalNoNodes; i++)
+  for(uint32_t i = 0; i < m_totalNoNodes; i++)
   {
 	int minConnections;
 	int maxConnections;
@@ -808,7 +808,7 @@ for (int i = 0; i < m_totalNoNodes; i++)
 	      minConnections = 1;
 
 	    int index = 0;
-        for (int k = 1; k < connectionsDistributionIntervals.size(); k++)
+        for (size_t k = 1; k < connectionsDistributionIntervals.size(); k++)
         {
           if (minConnections < connectionsDistributionIntervals[k])
           {
@@ -828,7 +828,7 @@ for (int i = 0; i < m_totalNoNodes; i++)
   {
 	int count = 0;
 
-    while (m_nodesConnections[i].size() < m_minConnections[i] && count < 10*m_minConnections[i])
+    while (m_nodesConnections[i].size() < static_cast<size_t>(m_minConnections[i]) && count < 10*m_minConnections[i])
     {
       uint32_t index = rand() % nodes.size();
 	  uint32_t candidatePeer = nodes[index];
@@ -843,7 +843,7 @@ for (int i = 0; i < m_totalNoNodes; i++)
 /* 		if (m_systemId == 0)
           std::cout << "Node " << i << " has already a connection to Node " << nodes[index] << "\n"; */
       }
-      else if (m_nodesConnections[candidatePeer].size() >= m_maxConnections[candidatePeer])
+      else if (m_nodesConnections[candidatePeer].size() >= static_cast<size_t>(m_maxConnections[candidatePeer]))
       {
 /* 		if (m_systemId == 0)
           std::cout << "Node " << nodes[index] << " has already " << m_maxConnections[candidatePeer] << " connections" << "\n"; */
@@ -853,7 +853,7 @@ for (int i = 0; i < m_totalNoNodes; i++)
         m_nodesConnections[i].push_back(candidatePeer);
         m_nodesConnections[candidatePeer].push_back(i);
 
-        if (m_nodesConnections[candidatePeer].size() == m_maxConnections[candidatePeer])
+        if (m_nodesConnections[candidatePeer].size() == static_cast<size_t>(m_maxConnections[candidatePeer]))
         {
 /* 		  if (m_systemId == 0)
             std::cout << "Node " << nodes[index] << " is removed from index\n"; */
@@ -865,11 +865,11 @@ for (int i = 0; i < m_totalNoNodes; i++)
   }
 
   //Then the rest of nodes
-  for(int i = 0; i < m_totalNoNodes; i++)
+  for(uint32_t i = 0; i < m_totalNoNodes; i++)
   {
 	int count = 0;
 
-    while (m_nodesConnections[i].size() < m_minConnections[i] && count < 10*m_minConnections[i])
+    while (m_nodesConnections[i].size() < static_cast<size_t>(m_minConnections[i]) && count < 10*m_minConnections[i])
     {
       uint32_t index = rand() % nodes.size();
 	  uint32_t candidatePeer = nodes[index];
@@ -884,7 +884,7 @@ for (int i = 0; i < m_totalNoNodes; i++)
 /* 		if (m_systemId == 0)
           std::cout << "Node " << i << " has already a connection to Node " << nodes[index] << "\n"; */
       }
-      else if (m_nodesConnections[candidatePeer].size() >= m_maxConnections[candidatePeer])
+      else if (m_nodesConnections[candidatePeer].size() >= static_cast<size_t>(m_maxConnections[candidatePeer]))
       {
 /* 		if (m_systemId == 0)
           std::cout << "Node " << nodes[index] << " has already " << m_maxConnections[candidatePeer] << " connections" << "\n"; */
@@ -894,7 +894,7 @@ for (int i = 0; i < m_totalNoNodes; i++)
         m_nodesConnections[i].push_back(candidatePeer);
         m_nodesConnections[candidatePeer].push_back(i);
 
-        if (m_nodesConnections[candidatePeer].size() == m_maxConnections[candidatePeer])
+        if (m_nodesConnections[candidatePeer].size() == static_cast<size_t>(m_maxConnections[candidatePeer]))
         {
 /* 		  if (m_systemId == 0)
             std::cout << "Node " << nodes[index] << " is removed from index\n"; */
@@ -908,9 +908,9 @@ for (int i = 0; i < m_totalNoNodes; i++)
   //Print the nodes with fewer than required connections
   if (m_systemId == 0)
   {
-    for(int i = 0; i < m_totalNoNodes; i++)
+    for(uint32_t i = 0; i < m_totalNoNodes; i++)
     {
-	  if (m_nodesConnections[i].size() < m_minConnections[i])
+	  if (m_nodesConnections[i].size() < static_cast<size_t>(m_minConnections[i]))
 	    std::cout << "Node " << i << " should have at least " << m_minConnections[i] << " connections but it has only " << m_nodesConnections[i].size() << " connections\n";
     }
   }
@@ -938,11 +938,11 @@ for (int i = 0; i < m_totalNoNodes; i++)
 	double averageNoConnectionsPerNode = 0;
 	double averageNoConnectionsPerMiner = 0;
 
-	for(int i = 0; i < connectionsDistributionIntervals.size(); i++)
+	for(size_t i = 0; i < connectionsDistributionIntervals.size(); i++)
       intervals[i] = connectionsDistributionIntervals[i] + i;
     intervals[connectionsDistributionIntervals.size()] = m_maxConnectionsPerMiner;
 
-	for(int i = 0; i < connectionsDistributionIntervals.size(); i++)
+	for(size_t i = 0; i < connectionsDistributionIntervals.size(); i++)
       stats[i] = 0;
 
     std::cout << "\nThe nodes connections stats are:\n";
@@ -956,9 +956,9 @@ for (int i = 0; i < m_totalNoNodes; i++)
       else
         averageNoConnectionsPerMiner += node.second.size();
 
-	  for (int i = 1; i < connectionsDistributionIntervals.size(); i++)
+	  for (size_t i = 1; i < connectionsDistributionIntervals.size(); i++)
       {
-        if (node.second.size() <= intervals[i])
+        if (node.second.size() <= static_cast<size_t>(intervals[i]))
         {
           stats[i-1]++;
           placed = true;
@@ -1020,7 +1020,7 @@ for (int i = 0; i < m_totalNoNodes; i++)
     std::map<uint32_t, std::vector<double>> downloadRegionBandwidths;
     std::map<uint32_t, std::vector<double>> uploadRegionBandwidths;
 
-    for(int i = 0; i < m_totalNoNodes; i++)
+    for(uint32_t i = 0; i < m_totalNoNodes; i++)
     {
       if ( std::find(m_miners.begin(), m_miners.end(), i) == m_miners.end())
       {
