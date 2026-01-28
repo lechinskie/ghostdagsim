@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dag.h"
+#include "ipv4-address-helper-custom.h"
 
 #include "ns3/internet-stack-helper.h"
 #include "ns3/ipv4-address-helper.h"
@@ -67,7 +68,7 @@ class GhostDagTopologyHelper
      * \brief Assign IPv4 addresses to all network interfaces
      * \param ip IPv4 address helper for assignment
      */
-    void AssignIpv4Addresses(Ipv4AddressHelper ip);
+    void AssignIpv4Addresses(Ipv4AddressHelperCustom ip);
 
     /**
      * \brief Set node positions for visualization

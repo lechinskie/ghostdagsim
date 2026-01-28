@@ -51,7 +51,7 @@ main(int argc, char* argv[])
     int targetNumberOfBlocks = 1000;
     double averageBlockGenIntervalSeconds = 1.0;
 
-    int totalNoNodes = 10;
+    int totalNoNodes = 1000;
     int minConnectionsPerNode = 4;
     int maxConnectionsPerNode = 8;
     int noMiners = 5;
@@ -200,9 +200,7 @@ main(int argc, char* argv[])
     topologyHelper.InstallStack(stack);
 
     // Assign IP addresses
-    Ipv4AddressHelper addressHelper;
-    addressHelper.SetBase("10.1.0.0", "255.255.255.0");
-    topologyHelper.AssignIpv4Addresses(addressHelper);
+    topologyHelper.AssignIpv4Addresses(Ipv4AddressHelperCustom("10.1.0.0", "255.255.255.0", false));
 
     ipv4InterfaceContainer = topologyHelper.GetIpv4InterfaceContainer();
     nodesConnections = topologyHelper.GetNodesConnectionsIps();
