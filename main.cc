@@ -11,6 +11,7 @@
 #include "ns3/network-module.h"
 #include "ns3/point-to-point-module.h"
 
+#include <cmath>
 #include <sys/time.h>
 
 #define MPI_TEST
@@ -28,6 +29,9 @@ void PrintStatsForEachNode(NodeStats *stats, int totalNodes);
 void PrintTotalStats(NodeStats *stats, int totalNodes, double start,
                      double finish, double averageBlockGenIntervalMinutes);
 void PrintRegionStats(uint32_t *nodesRegions, uint32_t totalNodes);
+void SetNodePositions(AnimationInterface &anim,
+                      GhostDagTopologyHelper &topologyHelper, int totalNodes,
+                      const std::vector<uint32_t> &miners);
 
 NS_LOG_COMPONENT_DEFINE("GhostDagSimulator");
 
@@ -43,13 +47,13 @@ int main(int argc, char *argv[]) {
 
   const int secsPerMin = 60;
   const uint16_t ghostdagPort = 16433;
-  int targetNumberOfBlocks = 1000;
+  int targetNumberOfBlocks = 100;
   double averageBlockGenIntervalSeconds = 1.0;
 
-  int totalNoNodes = 1000;
-  int minConnectionsPerNode = 4;
-  int maxConnectionsPerNode = 8;
-  int noMiners = 5;
+  int totalNoNodes = 10;
+  int minConnectionsPerNode = -1;
+  int maxConnectionsPerNode = -1;
+  int noMiners = 3;
   uint8_t ghostdagK = 10;
 
   double *minersHash;
@@ -171,6 +175,15 @@ int main(int argc, char *argv[]) {
                                         minersRegions, minConnectionsPerNode,
                                         maxConnectionsPerNode, 5.0, systemId);
 
+  // Install mobility model for all nodes
+  MobilityHelper mobility;
+  mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
+
+  for (int i = 0; i < totalNoNodes; i++) {
+    Ptr<Node> node = topologyHelper.GetNode(i);
+    mobility.Install(node);
+  }
+
   // Install Internet stack
   InternetStackHelper stack;
   topologyHelper.InstallStack(stack);
@@ -267,11 +280,11 @@ int main(int argc, char *argv[]) {
   Simulator::Stop(Minutes(stop + 0.1));
 
   AnimationInterface anim("topology.xml");
-  MobilityHelper mobility;
-  mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
-  mobility.InstallAll();
-  ns3::AnimationInterface::SetConstantPosition(ghostdagNodes.Get(0)->GetNode(),
-                                               10.0, 10.0);
+  anim.SetMobilityPollInterval(Seconds(1));
+  anim.EnablePacketMetadata(true);
+
+  SetNodePositions(anim, topologyHelper, totalNoNodes, miners);
+
   Simulator::Run();
   Simulator::Destroy();
 
@@ -370,6 +383,143 @@ double GetWallTime() {
     return 0;
   }
   return (double)time.tv_sec + (double)time.tv_usec * .000001;
+}
+
+void SetNodePositions(AnimationInterface &anim,
+                      GhostDagTopologyHelper &topologyHelper, int totalNodes,
+                      const std::vector<uint32_t> &miners) {
+  // Layout parameters
+  double canvasWidth = 100.0;
+  double canvasHeight = 100.0;
+
+  if (totalNodes <= 10) {
+    // For small networks: circular layout
+    double centerX = canvasWidth / 2.0;
+    double centerY = canvasHeight / 2.0;
+    double radius = std::min(canvasWidth, canvasHeight) * 0.4;
+
+    for (int i = 0; i < totalNodes; i++) {
+      double angle = 2.0 * M_PI * i / totalNodes;
+      double x = centerX + radius * cos(angle);
+      double y = centerY + radius * sin(angle);
+
+      Ptr<Node> node = topologyHelper.GetNode(i);
+
+      // Set position on mobility model
+      Ptr<ConstantPositionMobilityModel> mob =
+          node->GetObject<ConstantPositionMobilityModel>();
+      if (mob) {
+        mob->SetPosition(Vector(x, y, 0.0));
+      }
+
+      // Also set for animation
+      anim.SetConstantPosition(node, x, y);
+
+      // Make miners larger
+      bool isMiner = std::find(miners.begin(), miners.end(), i) != miners.end();
+      if (isMiner) {
+        anim.UpdateNodeColor(node, 255, 0, 0); // Red for miners
+      } else {
+        anim.UpdateNodeColor(node, 0, 0, 255); // Blue for regular nodes
+      }
+    }
+  } else if (totalNodes <= 100) {
+    // For medium networks: grid layout
+    int cols = static_cast<int>(ceil(sqrt(totalNodes)));
+    int rows = static_cast<int>(ceil(static_cast<double>(totalNodes) / cols));
+
+    double spacingX = canvasWidth / (cols + 1);
+    double spacingY = canvasHeight / (rows + 1);
+
+    for (int i = 0; i < totalNodes; i++) {
+      int row = i / cols;
+      int col = i % cols;
+      double x = spacingX * (col + 1);
+      double y = spacingY * (row + 1);
+
+      Ptr<Node> node = topologyHelper.GetNode(i);
+
+      // Set position on mobility model
+      Ptr<ConstantPositionMobilityModel> mob =
+          node->GetObject<ConstantPositionMobilityModel>();
+      if (mob) {
+        mob->SetPosition(Vector(x, y, 0.0));
+      }
+
+      anim.SetConstantPosition(node, x, y);
+
+      bool isMiner = std::find(miners.begin(), miners.end(), i) != miners.end();
+      if (isMiner) {
+        anim.UpdateNodeColor(node, 255, 0, 0);
+      } else {
+        anim.UpdateNodeColor(node, 0, 0, 255);
+      }
+    }
+  } else {
+    // For large networks: pseudo-random but deterministic layout
+    // Place miners in center, regular nodes around them
+    std::vector<uint32_t> regularNodes;
+    for (int i = 0; i < totalNodes; i++) {
+      if (std::find(miners.begin(), miners.end(), i) == miners.end()) {
+        regularNodes.push_back(i);
+      }
+    }
+
+    double centerX = canvasWidth / 2.0;
+    double centerY = canvasHeight / 2.0;
+
+    // Place miners in center cluster
+    double minerRadius = 50.0;
+    for (size_t i = 0; i < miners.size(); i++) {
+      double angle = 2.0 * M_PI * i / miners.size();
+      double x = centerX + minerRadius * cos(angle);
+      double y = centerY + minerRadius * sin(angle);
+
+      Ptr<Node> node = topologyHelper.GetNode(miners[i]);
+
+      // Set position on mobility model
+      Ptr<ConstantPositionMobilityModel> mob =
+          node->GetObject<ConstantPositionMobilityModel>();
+      if (mob) {
+        mob->SetPosition(Vector(x, y, 0.0));
+      }
+
+      anim.SetConstantPosition(node, x, y);
+      anim.UpdateNodeColor(node, 255, 0, 0);
+    }
+
+    // Place regular nodes in expanding circles
+    int nodesPerRing = 20;
+    double radiusIncrement = 80.0;
+    double baseRadius = 150.0;
+
+    for (size_t i = 0; i < regularNodes.size(); i++) {
+      int ring = i / nodesPerRing;
+      int posInRing = i % nodesPerRing;
+
+      double radius = baseRadius + ring * radiusIncrement;
+      double angle = 2.0 * M_PI * posInRing / nodesPerRing + (ring * 0.5);
+
+      double x = centerX + radius * cos(angle);
+      double y = centerY + radius * sin(angle);
+
+      // Keep within bounds
+      x = std::max(10.0, std::min(x, canvasWidth - 10.0));
+      y = std::max(10.0, std::min(y, canvasHeight - 10.0));
+
+      Ptr<Node> node = topologyHelper.GetNode(regularNodes[i]);
+
+      // Set position on mobility model
+      Ptr<ConstantPositionMobilityModel> mob =
+          node->GetObject<ConstantPositionMobilityModel>();
+      if (mob) {
+        mob->SetPosition(Vector(x, y, 0.0));
+      }
+
+      anim.SetConstantPosition(node, x, y);
+      anim.UpdateNodeColor(node, 0, 0, 255);
+    }
+  }
 }
 
 void PrintStatsForEachNode(NodeStats *stats, int totalNodes) {
