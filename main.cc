@@ -404,7 +404,7 @@ void SetNodePositions(AnimationInterface &anim,
       }
 
       // Also set for animation
-      anim.SetConstantPosition(node, x, y);
+      ns3::AnimationInterface::SetConstantPosition(node, x, y);
 
       // Make miners larger
       bool isMiner = std::find(miners.begin(), miners.end(), i) != miners.end();
@@ -437,7 +437,7 @@ void SetNodePositions(AnimationInterface &anim,
         mob->SetPosition(Vector(x, y, 0.0));
       }
 
-      anim.SetConstantPosition(node, x, y);
+      ns3::AnimationInterface::SetConstantPosition(node, x, y);
 
       bool isMiner = std::find(miners.begin(), miners.end(), i) != miners.end();
       if (isMiner) {
@@ -475,7 +475,7 @@ void SetNodePositions(AnimationInterface &anim,
         mob->SetPosition(Vector(x, y, 0.0));
       }
 
-      anim.SetConstantPosition(node, x, y);
+      ns3::AnimationInterface::SetConstantPosition(node, x, y);
       anim.UpdateNodeColor(node, 255, 0, 0);
     }
 
@@ -507,7 +507,7 @@ void SetNodePositions(AnimationInterface &anim,
         mob->SetPosition(Vector(x, y, 0.0));
       }
 
-      anim.SetConstantPosition(node, x, y);
+      ns3::AnimationInterface::SetConstantPosition(node, x, y);
       anim.UpdateNodeColor(node, 0, 0, 255);
     }
   }
