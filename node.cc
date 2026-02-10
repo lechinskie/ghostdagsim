@@ -281,6 +281,9 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
 
 void GhostDagNode::SendMessage(enum Messages recv, enum Messages type,
                                std::string payload, Address &to) {
+  nlohmann::json d = nlohmann::json::parse(payload);
+  d["msg"] = type;
+  payload = d.dump();
   Ptr<Packet> packet =
       Create<Packet>((uint8_t *)payload.c_str(), payload.size());
   const uint8_t buf[] = {MSG_DELIMITER};
@@ -307,7 +310,6 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
   case PING: {
     NS_LOG_INFO("Node " << GetNode()->GetId() << " <- PING → PONG");
     nlohmann::json d;
-    d["msg"] = PONG;
     d["whoami"] = std::to_string(GetNode()->GetId());
 
     SendMessage(PING, PONG, d.dump(), from);
@@ -333,7 +335,6 @@ void GhostDagNode::PingPeers() {
     auto sk = InetSocketAddress(ipv4, m_ghostdag_port);
     auto addr = Address(sk);
     nlohmann::json d;
-    d["msg"] = PING;
     d["whoami"] = std::to_string(GetNode()->GetId());
 
     SendMessage(NO_MESSAGE, PING, d.dump(), addr);
