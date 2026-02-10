@@ -110,6 +110,7 @@ protected:
   Time m_inv_timeout_minutes;
   bool m_is_miner;
   bool m_mine_not_synced;
+  double m_fixed_block_interval;
 
   // Network Params
   double m_download_speed;
