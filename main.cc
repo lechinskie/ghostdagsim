@@ -175,15 +175,6 @@ int main(int argc, char *argv[]) {
                                         minersRegions, minConnectionsPerNode,
                                         maxConnectionsPerNode, 5.0, systemId);
 
-  // Install mobility model for all nodes
-  MobilityHelper mobility;
-  mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
-
-  for (int i = 0; i < totalNoNodes; i++) {
-    Ptr<Node> node = topologyHelper.GetNode(i);
-    mobility.Install(node);
-  }
-
   // Install Internet stack
   InternetStackHelper stack;
   topologyHelper.InstallStack(stack);
