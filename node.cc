@@ -65,6 +65,11 @@ TypeId GhostDagNode::GetTypeId() {
                         DoubleValue(1000000.0),
                         MakeDoubleAccessor(&GhostDagNode::m_upload_speed),
                         MakeDoubleChecker<double>())
+          .AddAttribute(
+              "FixedBlockInterval",
+              "Fixed interval to generate blocks (seconds).", DoubleValue(1.0),
+              MakeDoubleAccessor(&GhostDagNode::m_fixed_block_interval),
+              MakeDoubleChecker<double>())
           .AddTraceSource("Rx", "A packet has been received",
                           MakeTraceSourceAccessor(&GhostDagNode::m_rx_trace),
                           "ns3::Packet::AddressTracedCallback");
