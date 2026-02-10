@@ -14,16 +14,15 @@
 #include <cmath>
 #include <sys/time.h>
 
-#define MPI_TEST
-#define NS3_MPI
-
-#ifdef NS3_MPI
-#include <mpi.h>
+#ifndef NS3_MPI
+#error                                                                         \
+    "Distributed simulations need to run with NS3_MPI module, reconfigure and build your ns3 waf again pls"
 #endif
+
+#include <mpi.h>
 
 using namespace ns3;
 
-// Function declarations
 double GetWallTime();
 void PrintStatsForEachNode(NodeStats *stats, int totalNodes);
 void PrintTotalStats(NodeStats *stats, int totalNodes, double start,
@@ -37,7 +36,6 @@ NS_LOG_COMPONENT_DEFINE("GhostDagSimulator");
 
 int main(int argc, char *argv[]) {
   LogComponentEnable("GhostDagNode", LOG_LEVEL_INFO);
-#ifdef NS3_MPI
   // Simulation parameters
   bool nullmsg = false;
   bool testScalability = false;
@@ -99,7 +97,6 @@ int main(int argc, char *argv[]) {
 
   cmd.Parse(argc, argv);
 
-  // Validation
   if (noMiners > totalNoNodes) {
     std::cout << "Number of miners cannot exceed total nodes" << std::endl;
     return 0;
@@ -115,7 +112,6 @@ int main(int argc, char *argv[]) {
       minersRegions[i] = defaultMinersRegions[i];
     }
   } else {
-    // Distribute hash power evenly for more miners
     double hashPerMiner = 1.0 / noMiners;
     for (int i = 0; i < noMiners; i++) {
       minersHash[i] = hashPerMiner;
@@ -142,8 +138,6 @@ int main(int argc, char *argv[]) {
     stats[i].max_dag_width_seen = 0;
   }
 
-#ifdef MPI_TEST
-  // Distributed simulation setup
   if (nullmsg) {
     GlobalValue::Bind("SimulatorImplementationType",
                       StringValue("ns3::NullMessageSimulatorImpl"));
@@ -155,10 +149,6 @@ int main(int argc, char *argv[]) {
   MpiInterface::Enable(&argc, &argv);
   uint32_t systemId = MpiInterface::GetSystemId();
   uint32_t systemCount = MpiInterface::GetSize();
-#else
-  uint32_t systemId = 0;
-  uint32_t systemCount = 1;
-#endif
 
   if (systemId == 0) {
     std::cout << "\n=== GHOSTDAG Network Simulator ===\n";
@@ -279,7 +269,6 @@ int main(int argc, char *argv[]) {
   Simulator::Run();
   Simulator::Destroy();
 
-#ifdef MPI_TEST
   // MPI data gathering
   int blocklen[15] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
   MPI_Aint disp[15];
@@ -329,7 +318,6 @@ int main(int argc, char *argv[]) {
       count++;
     }
   }
-#endif
 
   // Print results
   if (systemId == 0) {
@@ -353,19 +341,13 @@ int main(int argc, char *argv[]) {
     std::cout << "Block interval: " << averageBlockGenIntervalSeconds << "s\n";
   }
 
-#ifdef MPI_TEST
   MpiInterface::Disable();
-#endif
 
   delete[] stats;
   delete[] minersHash;
   delete[] minersRegions;
 
   return 0;
-
-#else
-  NS_FATAL_ERROR("Cannot use distributed simulator without MPI compiled in");
-#endif
 }
 
 double GetWallTime() {
