@@ -2,8 +2,6 @@
 
 #include "node.h"
 
-#include <random>
-
 namespace ns3 {
 
 class GhostDagMiner : public GhostDagNode {
@@ -36,8 +34,6 @@ protected:
 
   int m_txsPerBlock;
   int m_txSelectionStrategy;
-
-  std::mt19937 m_generator;
 
   int m_minerGeneratedBlocks;
   double m_previousBlockGenerationTime;
