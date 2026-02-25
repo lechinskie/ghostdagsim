@@ -183,8 +183,6 @@ void GhostDagNode::StartApplication() {
 
   if (m_node_stats) {
   }
-  m_ping_event =
-      Simulator::Schedule(Seconds(10.0), &GhostDagNode::PingPeers, this);
 }
 
 void GhostDagNode::StopApplication() {
@@ -294,6 +292,44 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
   case PONG:
     NS_LOG_INFO("Node " << GetNode()->GetId() << " <- PONG from " << from);
     break;
+  case INV_RELAY_BLOCK: {
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " received INV_RELAY_BLOCK");
+    auto data = nlohmann::json::parse(payload);
+    if (data.contains("block_hash")) {
+      std::string block_hash = data["block_hash"];
+      HandleInvRelayBlock(block_hash, from);
+    }
+    break;
+  }
+  case REQ_RELAY_BLOCK: {
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " received REQ_RELAY_BLOCK");
+    auto data = nlohmann::json::parse(payload);
+    if (data.contains("block_hash")) {
+      std::string block_hash = data["block_hash"];
+      HandleReqRelayBlock(block_hash, from);
+    }
+    break;
+  }
+  case BLOCK: {
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " received BLOCK");
+    auto data = nlohmann::json::parse(payload);
+    if (data.contains("block")) {
+      Block newBlock;
+      auto &blockData = data["block"];
+      newBlock.header.block_id = blockData.value("block_id", 0);
+      newBlock.header.miner_id = blockData.value("miner_id", 0);
+      newBlock.header.time_created = blockData.value("time_created", 0.0);
+
+      if (blockData.contains("parent_hashes")) {
+        for (auto &ph : blockData["parent_hashes"]) {
+          newBlock.header.parent_hashes.push_back(ph.get<int>());
+        }
+      }
+
+      HandleBlock(newBlock, from);
+    }
+    break;
+  }
   default:
     NS_LOG_ERROR("Node: " << GetNode()->GetId()
                           << " Received not know message: " << payload);
@@ -337,6 +373,115 @@ void GhostDagNode::HandlePeerError(Ptr<Socket> socket) {
 void GhostDagNode::HandleAccept(Ptr<Socket> s, const Address &from) {
   NS_LOG_FUNCTION(this << s << from);
   s->SetRecvCallback(MakeCallback(&GhostDagNode::HandleRead, this));
+}
+
+void GhostDagNode::HandleInvRelayBlock(const std::string &block_hash,
+                                       Address &from) {
+  NS_LOG_FUNCTION(this << block_hash);
+
+  int block_id = std::stoi(block_hash);
+
+  if (!m_blockchain.HasBlock(block_id) && !m_blockchain.IsOrphan(block_id)) {
+    nlohmann::json req;
+    req["block_hash"] = block_hash;
+
+    SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, req.dump(), from);
+
+    m_queue_inv[block_hash].push_back(from);
+    m_inv_timeouts[block_hash] =
+        Simulator::Schedule(m_inv_timeout_minutes,
+                            &GhostDagNode::InvTimeoutExpired, this, block_hash);
+  }
+}
+
+void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
+                                       Address &from) {
+  NS_LOG_FUNCTION(this << block_hash);
+
+  int block_id = std::stoi(block_hash);
+
+  if (m_blockchain.HasBlock(block_id)) {
+    const Block &block = m_blockchain.blocks.at(block_id);
+
+    nlohmann::json blockMsg;
+    blockMsg["block"]["block_id"] = block.header.block_id;
+    blockMsg["block"]["miner_id"] = block.header.miner_id;
+    blockMsg["block"]["time_created"] = block.header.time_created;
+    blockMsg["block"]["parent_hashes"] = nlohmann::json::array();
+    for (int parent : block.header.parent_hashes) {
+      blockMsg["block"]["parent_hashes"].push_back(parent);
+    }
+
+    SendMessage(NO_MESSAGE, BLOCK, blockMsg.dump(), from);
+  }
+}
+
+void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
+  NS_LOG_FUNCTION(this << new_block.header.block_id);
+
+  double currentTime = Simulator::Now().GetSeconds();
+  Block block = new_block;
+  block.time_received = currentTime;
+
+  InetSocketAddress peer = InetSocketAddress::ConvertFrom(from);
+  block.received_from = peer.GetIpv4();
+
+  bool hadBlock = m_blockchain.HasBlock(block.header.block_id);
+  bool wasOrphan = m_blockchain.IsOrphan(block.header.block_id);
+
+  int prevTipCount = m_blockchain.tips.size();
+  m_blockchain.AddBlock(block);
+  int newTipCount = m_blockchain.tips.size();
+
+  if (!hadBlock && !wasOrphan) {
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " added new block "
+                        << block.header.block_id << " to DAG (tips: "
+                        << prevTipCount << " -> " << newTipCount << ")");
+
+    std::string blockHash = std::to_string(block.header.block_id);
+    BroadcastInvBlock(blockHash);
+  } else if (!hadBlock && wasOrphan) {
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " resolved orphan block "
+                        << block.header.block_id);
+  }
+}
+
+void GhostDagNode::InvTimeoutExpired(std::string block_hash) {
+  NS_LOG_FUNCTION(this << block_hash);
+  m_queue_inv.erase(block_hash);
+  m_inv_timeouts.erase(block_hash);
+}
+
+bool GhostDagNode::OnlyHeadersReceived(std::string block_hash) {
+  return m_only_headers_received.find(block_hash) !=
+         m_only_headers_received.end();
+}
+
+void GhostDagNode::RemoveSendTime() {}
+
+void GhostDagNode::RemoveReceiveTime() {}
+
+void GhostDagNode::HandleInvTransactions(
+    const std::vector<std::string> &tx_hashes, Address &from) {}
+
+void GhostDagNode::HandleReqTransactions(
+    const std::vector<std::string> &tx_hashes, Address &from) {}
+
+void GhostDagNode::HandleTransaction(const Transaction &tx, Address &from) {}
+
+void GhostDagNode::BroadcastInvTransaction(const std::string &tx_hash) {}
+
+void GhostDagNode::BroadcastInvBlock(const std::string &block_hash) {
+  NS_LOG_FUNCTION(this << block_hash);
+
+  nlohmann::json inv;
+  inv["block_hash"] = block_hash;
+
+  for (const auto &peer_addr : m_peers_addresses) {
+    InetSocketAddress peer = InetSocketAddress(peer_addr, m_ghostdag_port);
+    Address addr = Address(peer);
+    SendMessage(NO_MESSAGE, INV_RELAY_BLOCK, inv.dump(), addr);
+  }
 }
 
 } // namespace ns3

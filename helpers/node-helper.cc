@@ -1,5 +1,6 @@
 #include "node-helper.h"
 
+#include "../miner.h"
 #include "../node.h"
 
 #include "ns3/inet-socket-address.h"
@@ -34,7 +35,6 @@ void GhostDagNodeHelper::commonConstructor(
   m_internet_speeds = internet_speeds;
   m_node_stats = stats;
 
-  // "Local" is likely an Attribute in your GhostDagNode TypeId
   m_factory.Set("Local", AddressValue(m_address));
 }
 
@@ -63,8 +63,6 @@ ApplicationContainer GhostDagNodeHelper::Install(NodeContainer c) {
 Ptr<Application> GhostDagNodeHelper::InstallPriv(Ptr<Node> node) {
   Ptr<GhostDagNode> app = m_factory.Create<GhostDagNode>();
 
-  // Manually set variables that are passed via helper methods rather than NS3
-  // Attributes
   app->SetPeersAddresses(m_peers_addresses);
   app->SetPeersDownloadSpeeds(m_peers_download_speeds);
   app->SetPeersUploadSpeeds(m_peers_upload_speeds);
@@ -100,6 +98,36 @@ void GhostDagNodeHelper::SetNodeInternetSpeeds(
 
 void GhostDagNodeHelper::SetNodeStats(NodeStats *node_stats) {
   m_node_stats = node_stats;
+}
+
+// GhostDagMinerHelper implementation
+
+GhostDagMinerHelper::GhostDagMinerHelper(
+    Address address, std::vector<Ipv4Address> &peers,
+    std::map<Ipv4Address, double> &peers_download_speeds,
+    std::map<Ipv4Address, double> &peers_upload_speeds,
+    NodeInternetSpeeds &internet_speeds, NodeStats *stats) {
+  m_factory.SetTypeId("ns3::GhostDagMiner");
+  commonConstructor(address, peers, peers_download_speeds, peers_upload_speeds,
+                    internet_speeds, stats);
+}
+
+GhostDagMinerHelper::GhostDagMinerHelper() {
+  m_factory.SetTypeId("ns3::GhostDagMiner");
+}
+
+Ptr<Application> GhostDagMinerHelper::InstallPriv(Ptr<Node> node) {
+  Ptr<GhostDagMiner> app = m_factory.Create<GhostDagMiner>();
+
+  app->SetPeersAddresses(m_peers_addresses);
+  app->SetPeersDownloadSpeeds(m_peers_download_speeds);
+  app->SetPeersUploadSpeeds(m_peers_upload_speeds);
+  app->SetNodeInternetSpeeds(m_internet_speeds);
+  app->SetNodeStats(m_node_stats);
+
+  node->AddApplication(app);
+
+  return app;
 }
 
 } // namespace ns3

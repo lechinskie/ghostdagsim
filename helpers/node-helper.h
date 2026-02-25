@@ -50,4 +50,17 @@ protected:
   NodeStats *m_node_stats;
 };
 
+class GhostDagMinerHelper : public GhostDagNodeHelper {
+public:
+  GhostDagMinerHelper(Address address, std::vector<Ipv4Address> &peers,
+                      std::map<Ipv4Address, double> &peers_download_speeds,
+                      std::map<Ipv4Address, double> &peers_upload_speeds,
+                      NodeInternetSpeeds &internetSpeeds, NodeStats *stats);
+
+  GhostDagMinerHelper();
+
+protected:
+  Ptr<Application> InstallPriv(Ptr<Node> node) override;
+};
+
 } // namespace ns3
