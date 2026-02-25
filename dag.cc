@@ -1,4 +1,5 @@
 #include "dag.h"
+#include "metrics.h"
 
 #include <queue>
 
@@ -13,6 +14,7 @@ void Blockchain::AddBlock(const Block &block) {
 
   if (is_orphan) {
     orphans[block.header.block_id] = block;
+    ns3::GetMetricsCollector().RecordBlockOrphan(block.header.block_id);
     return;
   }
 
@@ -32,6 +34,10 @@ void Blockchain::AddBlock(const Block &block) {
       (blue_set.find(block.header.block_id) != blue_set.end());
   blocks[block.header.block_id].blue_score =
       CalculateBlueScore(block.header.block_id, blue_set);
+
+  ns3::GetMetricsCollector().RecordBlockBlue(
+      block.header.block_id, blocks[block.header.block_id].is_blue);
+
   int max_blue_parent = -1;
   int max_blue_score = -1;
   for (int parent_id : block.header.parent_hashes) {
@@ -60,6 +66,7 @@ void Blockchain::AddBlock(const Block &block) {
   for (int orphan_id : to_unorphan) {
     Block orphan_block = orphans[orphan_id];
     orphans.erase(orphan_id);
+    ns3::GetMetricsCollector().RecordBlockResolved(orphan_id);
     AddBlock(orphan_block);
   }
 }

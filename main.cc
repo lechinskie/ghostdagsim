@@ -1,6 +1,7 @@
 #include "dag.h"
 #include "helpers/node-helper.h"
 #include "helpers/node-topology-helper.h"
+#include "metrics.h"
 
 #include "ns3/applications-module.h"
 #include "ns3/core-module.h"
@@ -24,8 +25,8 @@ double GetWallTime();
 NS_LOG_COMPONENT_DEFINE("GhostDagSimulator");
 
 int main(int argc, char *argv[]) {
-  LogComponentEnable("GhostDagNode", LOG_LEVEL_INFO);
-  LogComponentEnable("GhostDagMiner", LOG_LEVEL_INFO);
+  // LogComponentEnable("GhostDagNode", LOG_LEVEL_INFO);
+  // LogComponentEnable("GhostDagMiner", LOG_LEVEL_INFO);
 
   double tStart = GetWallTime();
   double tStartSimulation;
@@ -45,6 +46,11 @@ int main(int argc, char *argv[]) {
   int mempoolSize = 10000;
   double txFeeLambda = 150.0;
   int targetNumberOfBlocks = 10000;
+
+  std::string metricsBackend = "csv";
+  std::string metricsOutputPath = "./metrics";
+  uint16_t metricsPrometheusPort = 9090;
+  double metricsFlushInterval = 60.0;
 
   double *minersHash;
   enum Region *minersRegions;
@@ -85,12 +91,38 @@ int main(int argc, char *argv[]) {
   cmd.AddValue("txFeeLambda", "Transaction fee exponential lambda",
                txFeeLambda);
   cmd.AddValue("blocks", "Number of blocks to generate", targetNumberOfBlocks);
+  cmd.AddValue("metricsBackend", "Metrics backend: csv, prometheus",
+               metricsBackend);
+  cmd.AddValue("metricsOutput", "Output path for CSV metrics",
+               metricsOutputPath);
+  cmd.AddValue("metricsPort", "Prometheus exporter port",
+               metricsPrometheusPort);
+  cmd.AddValue("metricsFlushInterval",
+               "Periodic flush interval in seconds (0 to disable)",
+               metricsFlushInterval);
 
   cmd.Parse(argc, argv);
 
   if (noMiners > totalNoNodes) {
     std::cout << "Number of miners cannot exceed total nodes" << std::endl;
     return 0;
+  }
+
+  MetricBackend backend = MetricBackend::CSV;
+  if (metricsBackend == "prometheus") {
+    backend = MetricBackend::PROMETHEUS;
+  } else if (metricsBackend != "csv") {
+    std::cout << "Unknown metrics backend: " << metricsBackend << ", using csv"
+              << std::endl;
+  }
+
+  GetMetricsCollector().Initialize(backend, metricsOutputPath,
+                                   metricsPrometheusPort);
+  GetMetricsCollector().SetSimulationParams(totalNoNodes, noMiners, ghostdagK,
+                                            lambda);
+
+  if (metricsFlushInterval > 0) {
+    GetMetricsCollector().StartPeriodicFlush(metricsFlushInterval);
   }
 
   minersHash = new double[noMiners];
@@ -216,6 +248,9 @@ int main(int argc, char *argv[]) {
 
   Simulator::Run();
   Simulator::Destroy();
+
+  GetMetricsCollector().StopPeriodicFlush();
+  GetMetricsCollector().Flush();
 
   MpiInterface::Disable();
 

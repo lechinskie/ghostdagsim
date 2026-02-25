@@ -14,6 +14,22 @@ add_library(
   ${HELPER_SOURCES}
 )
 
+
+set(METRICS_PROMETHEUS ON)
+
+if(METRICS_PROMETHEUS)
+    find_package(prometheus-cpp CONFIG REQUIRED)
+    set(PROMETHEUS_LIBRARIES prometheus-cpp::pull prometheus-cpp::core)
+    message(STATUS "Prometheus metrics enabled")
+
+
+  if(NOT DEFINED prometheus-cpp_VERSION)
+    message(FATAL_ERROR "prometheus-cpp_VERSION is not defined")
+  endif()
+else()
+    set(PROMETHEUS_LIBRARIES "")
+endif()
+
 build_exec(
   EXECNAME ghostdagsim
   SOURCE_FILES ${C_SOURCES}
@@ -21,8 +37,13 @@ build_exec(
                     ${libcore}
                     ${ns3-libs}
                     ${ns3-contrib-libs}
+                    ${PROMETHEUS_LIBRARIES}
   EXECUTABLE_DIRECTORY_PATH ${CMAKE_OUTPUT_DIRECTORY}/scratch/ghostdagsim
 )
+
+if(METRICS_PROMETHEUS)
+    add_compile_definitions(METRICS_PROMETHEUS)
+endif()
 
 set(C_SOURCES_NO_MAIN ${C_SOURCES})
 list(FILTER C_SOURCES_NO_MAIN EXCLUDE REGEX ".*/main\\.cc$")
@@ -35,6 +56,7 @@ build_exec(
                     ${ns3-libs}
                     ${ns3-contrib-libs}
                     ${GTEST_LIBRARIES}
+                    ${PROMETHEUS_LIBRARIES}
   EXECUTABLE_DIRECTORY_PATH ${CMAKE_OUTPUT_DIRECTORY}/scratch/ghostdagsim
 )
 
@@ -46,6 +68,7 @@ build_exec(
                     ${ns3-libs}
                     ${ns3-contrib-libs}
                     ${GTEST_LIBRARIES}
+                    ${PROMETHEUS_LIBRARIES}
   EXECUTABLE_DIRECTORY_PATH ${CMAKE_OUTPUT_DIRECTORY}/scratch/ghostdagsim
 )
 
