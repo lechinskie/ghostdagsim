@@ -170,6 +170,8 @@ int main(int argc, char *argv[]) {
       minerHelper.SetAttribute("TxsPerBlock", UintegerValue(txsPerBlock));
       minerHelper.SetAttribute("TxSelectionStrategy",
                                UintegerValue(minersStrategies[i]));
+      minerHelper.SetAttribute("MempoolSize", UintegerValue(mempoolSize));
+      minerHelper.SetAttribute("TxFeeLambda", DoubleValue(txFeeLambda));
 
       ghostdagMiners.Add(minerHelper.Install(targetNode));
     }
@@ -190,6 +192,8 @@ int main(int argc, char *argv[]) {
             nodesInternetSpeeds[node.first], &stats[node.first]);
 
         nodeHelper.SetAttribute("Kghostdag", UintegerValue(ghostdagK));
+        nodeHelper.SetAttribute("MempoolSize", UintegerValue(mempoolSize));
+        nodeHelper.SetAttribute("TxFeeLambda", DoubleValue(txFeeLambda));
 
         ghostdagNodes.Add(nodeHelper.Install(targetNode));
       }

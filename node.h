@@ -66,6 +66,12 @@ protected:
   void BroadcastInvBlock(const std::string &block_hash);
   void BroadcastInvTransaction(const std::string &tx_hash);
 
+  // --- Transaction generation ---
+  void StartTransactionGeneration();
+  void StopTransactionGeneration();
+  void ScheduleNextTxGeneration();
+  void GenerateTransaction();
+
   // --- Timeout & Queue Management ---
   void InvTimeoutExpired(std::string block_hash);
   bool OnlyHeadersReceived(std::string block_hash);
@@ -73,9 +79,6 @@ protected:
   // Metrics helpers
   void RemoveSendTime();
   void RemoveReceiveTime();
-
-  void PingPeers();
-  EventId m_ping_event;
 
   Ptr<Socket> m_socket;
   Address m_local;
@@ -113,6 +116,15 @@ protected:
   int m_message_header_size;
   int m_inventory_size;
   int m_headers_size;
+
+  // Transaction generation
+  bool m_generateTransactions;
+  double m_txFeeLambda;
+  int m_mempoolSize;
+  EventId m_nextTxGenerationEvent;
+  std::mt19937 m_generator;
+  std::exponential_distribution<double> m_txFeeDistribution;
+  int m_txsGenerated;
 
   TracedCallback<Ptr<const Packet>, const Address &> m_rx_trace;
 };

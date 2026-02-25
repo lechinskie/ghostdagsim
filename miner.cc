@@ -23,8 +23,8 @@ TypeId GhostDagMiner::GetTypeId() {
           .SetGroupName("Applications")
           .AddConstructor<GhostDagMiner>()
           .AddAttribute("BlockGenInterval",
-                        "Interval between block generations (seconds)",
-                        DoubleValue(1.0),
+                        "Mean interval between block generations (seconds)",
+                        DoubleValue(20.0),
                         MakeDoubleAccessor(&GhostDagMiner::m_blockGenInterval),
                         MakeDoubleChecker<double>())
           .AddAttribute("TxsPerBlock", "Number of transactions per block",
@@ -41,15 +41,8 @@ TypeId GhostDagMiner::GetTypeId() {
 }
 
 GhostDagMiner::GhostDagMiner()
-    : m_blockGenInterval(1.0), m_txsPerBlock(100), m_txSelectionStrategy(0) {
+    : m_blockGenInterval(20.0), m_txsPerBlock(100), m_txSelectionStrategy(0) {
   NS_LOG_FUNCTION(this);
-
-  std::random_device rd;
-  m_generator.seed(rd());
-
-  m_minerGeneratedBlocks = 0;
-  m_previousBlockGenerationTime = 0;
-  m_averageBlockGenInterval = 0;
 }
 
 GhostDagMiner::~GhostDagMiner() { NS_LOG_FUNCTION(this); }
@@ -76,6 +69,9 @@ int GhostDagMiner::GetTransactionsPerBlock() const { return m_txsPerBlock; }
 
 void GhostDagMiner::DoDispose() {
   NS_LOG_FUNCTION(this);
+  if (m_nextMiningEvent.IsPending()) {
+    Simulator::Cancel(m_nextMiningEvent);
+  }
   GhostDagNode::DoDispose();
 }
 
@@ -85,7 +81,7 @@ void GhostDagMiner::StartApplication() {
   GhostDagNode::StartApplication();
 
   NS_LOG_INFO("Miner " << GetNode()->GetId() << ": block generation interval = "
-                       << m_blockGenInterval << "s");
+                       << m_blockGenInterval << "s (Poisson)");
   NS_LOG_INFO("Miner " << GetNode()->GetId()
                        << ": txs per block = " << m_txsPerBlock);
   NS_LOG_INFO("Miner " << GetNode()->GetId() << ": tx selection strategy = "
@@ -108,13 +104,14 @@ void GhostDagMiner::StopApplication() {
 }
 
 void GhostDagMiner::ScheduleNextMiningEvent() {
-  NS_LOG_FUNCTION(this);
+  std::exponential_distribution<double> blockRate(1.0 / m_blockGenInterval);
+  double nextBlockTime = blockRate(m_generator);
 
   NS_LOG_DEBUG("Time " << Simulator::Now().GetSeconds() << ": Miner "
-                       << GetNode()->GetId() << " scheduling next block in "
-                       << m_blockGenInterval << "s");
+                       << GetNode()->GetId() << " will mine next block in "
+                       << nextBlockTime << "s");
 
-  m_nextMiningEvent = Simulator::Schedule(Seconds(m_blockGenInterval),
+  m_nextMiningEvent = Simulator::Schedule(Seconds(nextBlockTime),
                                           &GhostDagMiner::MineBlock, this);
 }
 

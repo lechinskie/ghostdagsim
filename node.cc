@@ -60,6 +60,20 @@ TypeId GhostDagNode::GetTypeId() {
               "Fixed interval to generate blocks (seconds).", DoubleValue(1.0),
               MakeDoubleAccessor(&GhostDagNode::m_fixed_block_interval),
               MakeDoubleChecker<double>())
+          .AddAttribute(
+              "GenerateTransactions", "Whether to generate transactions",
+              BooleanValue(true),
+              MakeBooleanAccessor(&GhostDagNode::m_generateTransactions),
+              MakeBooleanChecker())
+          .AddAttribute("TxFeeLambda",
+                        "Exponential distribution lambda for tx fees",
+                        DoubleValue(150.0),
+                        MakeDoubleAccessor(&GhostDagNode::m_txFeeLambda),
+                        MakeDoubleChecker<double>())
+          .AddAttribute("MempoolSize", "Maximum mempool size",
+                        UintegerValue(10000),
+                        MakeUintegerAccessor(&GhostDagNode::m_mempoolSize),
+                        MakeUintegerChecker<uint32_t>())
           .AddTraceSource("Rx", "A packet has been received",
                           MakeTraceSourceAccessor(&GhostDagNode::m_rx_trace),
                           "ns3::Packet::AddressTracedCallback");
@@ -68,9 +82,14 @@ TypeId GhostDagNode::GetTypeId() {
 
 GhostDagNode::GhostDagNode()
     : m_mempool(256), m_average_transaction_size(522.4),
-      m_transaction_index_size(2) {
+      m_transaction_index_size(2), m_generateTransactions(true),
+      m_txFeeLambda(150.0), m_mempoolSize(10000), m_txFeeDistribution(150.0),
+      m_txsGenerated(0) {
   NS_LOG_FUNCTION(this);
   m_socket = nullptr;
+
+  std::random_device rd;
+  m_generator.seed(rd() + 1);
 
   m_ghostdag_port = 16443;
   m_ghostdag_k = 10;
@@ -183,12 +202,11 @@ void GhostDagNode::StartApplication() {
 
   if (m_node_stats) {
   }
+
+  StartTransactionGeneration();
 }
 
 void GhostDagNode::StopApplication() {
-  if (m_ping_event.IsPending()) {
-    Simulator::Cancel(m_ping_event);
-  }
   NS_LOG_FUNCTION(this);
   for (auto &socket_pair : m_peers_sockets) {
     socket_pair.second->Close();
@@ -201,6 +219,8 @@ void GhostDagNode::StopApplication() {
 
   NS_LOG_WARN("\n\nGHOSTDAG NODE " << GetNode()->GetId() << ":");
   NS_LOG_WARN("Total Blocks in DAG = " << m_blockchain.blocks.size());
+
+  StopTransactionGeneration();
 
   // Update final stats
   if (m_node_stats) {
@@ -281,17 +301,6 @@ void GhostDagNode::SendMessage(enum Messages recv, enum Messages type,
 void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
                                   Address &from) {
   switch (msg_type) {
-  case PING: {
-    NS_LOG_INFO("Node " << GetNode()->GetId() << " <- PING → PONG");
-    nlohmann::json d;
-    d["whoami"] = std::to_string(GetNode()->GetId());
-
-    SendMessage(PING, PONG, d.dump(), from);
-    break;
-  }
-  case PONG:
-    NS_LOG_INFO("Node " << GetNode()->GetId() << " <- PONG from " << from);
-    break;
   case INV_RELAY_BLOCK: {
     NS_LOG_INFO("Node " << GetNode()->GetId() << " received INV_RELAY_BLOCK");
     auto data = nlohmann::json::parse(payload);
@@ -326,6 +335,15 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
         }
       }
 
+      if (blockData.contains("transactions")) {
+        for (auto &txData : blockData["transactions"]) {
+          Transaction tx;
+          tx.tx_id = txData.value("tx_id", 0);
+          tx.size_bytes = txData.value("size_bytes", 522);
+          newBlock.transactions.insert(tx);
+        }
+      }
+
       HandleBlock(newBlock, from);
     }
     break;
@@ -335,25 +353,6 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
                           << " Received not know message: " << payload);
     break;
   }
-}
-
-void GhostDagNode::PingPeers() {
-  if (m_peers_sockets.empty()) {
-    NS_LOG_INFO("Node " << GetNode()->GetId() << " has no peers to ping");
-  } else {
-    NS_LOG_INFO("Node " << GetNode()->GetId() << " pinging peers");
-  }
-  for (const auto &ipv4 : m_peers_addresses) {
-    auto sk = InetSocketAddress(ipv4, m_ghostdag_port);
-    auto addr = Address(sk);
-    nlohmann::json d;
-    d["whoami"] = std::to_string(GetNode()->GetId());
-
-    SendMessage(NO_MESSAGE, PING, d.dump(), addr);
-  }
-
-  m_ping_event =
-      Simulator::Schedule(Minutes(1.0), &GhostDagNode::PingPeers, this);
 }
 
 bool GhostDagNode::HandleConnectionRequest(Ptr<Socket> s, const Address &from) {
@@ -412,6 +411,14 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
       blockMsg["block"]["parent_hashes"].push_back(parent);
     }
 
+    blockMsg["block"]["transactions"] = nlohmann::json::array();
+    for (const auto &tx : block.transactions) {
+      nlohmann::json txJson;
+      txJson["tx_id"] = tx.tx_id;
+      txJson["size_bytes"] = tx.size_bytes;
+      blockMsg["block"]["transactions"].push_back(txJson);
+    }
+
     SendMessage(NO_MESSAGE, BLOCK, blockMsg.dump(), from);
   }
 }
@@ -425,6 +432,14 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
 
   InetSocketAddress peer = InetSocketAddress::ConvertFrom(from);
   block.received_from = peer.GetIpv4();
+
+  for (const auto &tx : block.transactions) {
+    if (m_mempool.size() < (size_t)m_mempoolSize) {
+      uint64_t txId = tx.tx_id;
+      uint32_t fee = 150;
+      m_mempool.insert(GetNode()->GetId(), txId, fee);
+    }
+  }
 
   bool hadBlock = m_blockchain.HasBlock(block.header.block_id);
   bool wasOrphan = m_blockchain.IsOrphan(block.header.block_id);
@@ -482,6 +497,62 @@ void GhostDagNode::BroadcastInvBlock(const std::string &block_hash) {
     Address addr = Address(peer);
     SendMessage(NO_MESSAGE, INV_RELAY_BLOCK, inv.dump(), addr);
   }
+}
+
+void GhostDagNode::StartTransactionGeneration() {
+  if (!m_generateTransactions) {
+    return;
+  }
+
+  NS_LOG_INFO("Node " << GetNode()->GetId()
+                      << " starting transaction generation (mempool size: "
+                      << m_mempoolSize << ", tx fee lambda: " << m_txFeeLambda
+                      << ")");
+
+  ScheduleNextTxGeneration();
+}
+
+void GhostDagNode::StopTransactionGeneration() {
+  if (m_nextTxGenerationEvent.IsPending()) {
+    Simulator::Cancel(m_nextTxGenerationEvent);
+  }
+
+  NS_LOG_INFO("Node " << GetNode()->GetId() << " generated " << m_txsGenerated
+                      << " transactions");
+}
+
+void GhostDagNode::ScheduleNextTxGeneration() {
+  std::exponential_distribution<double> txRate(1.0 / 0.1);
+  double nextTxTime = txRate(m_generator);
+
+  NS_LOG_DEBUG("Node " << GetNode()->GetId()
+                       << " will generate next transaction in " << nextTxTime
+                       << "s");
+
+  m_nextTxGenerationEvent = Simulator::Schedule(
+      Seconds(nextTxTime), &GhostDagNode::GenerateTransaction, this);
+}
+
+void GhostDagNode::GenerateTransaction() {
+  NS_LOG_FUNCTION(this);
+
+  uint64_t txId =
+      (static_cast<uint64_t>(GetNode()->GetId()) << 32) | m_txsGenerated;
+  auto fee = static_cast<uint32_t>(m_txFeeDistribution(m_generator));
+
+  if (m_mempool.size() < (size_t)m_mempoolSize) {
+    m_mempool.insert(GetNode()->GetId(), txId, fee);
+    m_txsGenerated++;
+
+    NS_LOG_DEBUG("Node " << GetNode()->GetId() << " generated transaction "
+                         << txId << " with fee " << fee
+                         << " (mempool size: " << m_mempool.size() << ")");
+  } else {
+    NS_LOG_DEBUG("Node " << GetNode()->GetId()
+                         << " mempool full, cannot add transaction");
+  }
+
+  ScheduleNextTxGeneration();
 }
 
 } // namespace ns3
