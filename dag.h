@@ -4,46 +4,7 @@
 
 #include <map>
 #include <set>
-#include <unordered_map>
 #include <vector>
-
-typedef struct {
-  int node_id;
-  double mean_block_receive_time;
-  double mean_block_propagation_time;
-  double mean_block_size;
-  int total_blocks;
-  int blue_blocks;
-  int red_blocks;
-  double orphan_rate;
-  bool is_miner;
-  int miner_generated_blocks;
-  double miner_average_block_gen_interval;
-  double miner_average_block_size;
-  double hash_rate;
-  bool attack_success;
-
-  long inv_received_bytes;
-  long inv_sent_bytes;
-  long get_headers_received_bytes;
-  long get_headers_sent_bytes;
-  long headers_received_bytes;
-  long headers_sent_bytes;
-  long get_data_received_bytes;
-  long get_data_sent_bytes;
-  long block_received_bytes;
-  long block_sent_bytes;
-
-  int connections;
-  long block_timeouts;
-
-  double total_validation_time;
-  int max_dag_width_seen;
-
-  double mempool_similarity_score;
-} NodeStats;
-
-enum NodeState { STANDBY, SYNCING_HEADERS, SYNCING_BLOCKS, READY };
 
 typedef struct {
   double download_speed;
@@ -73,15 +34,6 @@ enum Messages {
   REQ_HEADERS,
   BLOCK_HEADERS,
 
-  REQ_BLOCK_LOCATOR,
-  BLOCK_LOCATOR,
-  IDB_BLOCK_LOCATOR,
-
-  REQ_BLOCK_BODIES,
-  BLOCK_BODY,
-  REQ_IDB_BLOCKS,
-  IDB_BLOCK,
-
   INV_RELAY_BLOCK,
   REQ_RELAY_BLOCK,
 
@@ -90,8 +42,6 @@ enum Messages {
   INV_TRANSACTIONS,
   REQ_TRANSACTIONS,
   TRANSACTION,
-
-  REQ_ANTIPAST,
 };
 
 inline static std::string GetMessageName(Messages msg) {
@@ -106,20 +56,6 @@ inline static std::string GetMessageName(Messages msg) {
     return "REQ_HEADERS";
   case BLOCK_HEADERS:
     return "BLOCK_HEADERS";
-  case REQ_BLOCK_LOCATOR:
-    return "REQ_BLOCK_LOCATOR";
-  case BLOCK_LOCATOR:
-    return "BLOCK_LOCATOR";
-  case IDB_BLOCK_LOCATOR:
-    return "IDB_BLOCK_LOCATOR";
-  case REQ_BLOCK_BODIES:
-    return "REQ_BLOCK_BODIES";
-  case BLOCK_BODY:
-    return "BLOCK_BODY";
-  case REQ_IDB_BLOCKS:
-    return "REQ_IDB_BLOCKS";
-  case IDB_BLOCK:
-    return "IDB_BLOCK";
   case INV_RELAY_BLOCK:
     return "INV_RELAY_BLOCK";
   case REQ_RELAY_BLOCK:
@@ -132,12 +68,15 @@ inline static std::string GetMessageName(Messages msg) {
     return "REQ_TRANSACTIONS";
   case TRANSACTION:
     return "TRANSACTION";
-  case REQ_ANTIPAST:
-    return "REQ_ANTIPAST";
   default:
     return "UNKNOWN_MESSAGE";
   }
 }
+
+struct Transaction {
+  int tx_id;
+  int size_bytes;
+};
 
 struct BlockHeader {
   int block_id;
@@ -160,12 +99,6 @@ struct BlockHeader {
   }
 };
 
-struct Transaction {
-  int tx_id;
-  double arrival_time;
-  int size_bytes;
-};
-
 struct Block {
   BlockHeader header;
   std::set<Transaction> transactions;
@@ -174,14 +107,11 @@ struct Block {
   // just metrics popouse, not part of packet
   double time_received;
   ns3::Ipv4Address received_from;
-  int hop_count;
   int blue_score;
   bool is_blue;
   int selected_parent;
 
-  Block()
-      : size_in_bytes(0), time_received(0), hop_count(0), blue_score(0),
-        is_blue(false), selected_parent(-1) {}
+  Block() : size_in_bytes(0), time_received(0), blue_score(0), is_blue(false) {}
 
   int GetTotalSize() const {
     int body_size = transactions.size() * 4;
@@ -189,85 +119,17 @@ struct Block {
   }
 };
 
-struct Mempool {
-  std::unordered_map<int, Transaction> pending_txs;
-
-  void AddTransaction(const Transaction &tx) {
-    if (pending_txs.find(tx.tx_id) == pending_txs.end()) {
-      pending_txs[tx.tx_id] = tx;
-    }
-  }
-
-  void RemoveTransactions(const std::set<int> &tx_ids) {
-    for (int id : tx_ids) {
-      pending_txs.erase(id);
-    }
-  }
-
-  std::set<int> GetTransactionIds() const {
-    std::set<int> ids;
-    for (const auto &[id, tx] : pending_txs) {
-      ids.insert(id);
-    }
-    return ids;
-  }
-
-  int GetSymmetricDifference(const std::set<int> &block_txs) const {
-    int diff = 0;
-
-    for (int tx_id : block_txs) {
-      if (pending_txs.find(tx_id) == pending_txs.end()) {
-        diff++;
-      }
-    }
-
-    for (const auto &[tx_id, tx] : pending_txs) {
-      if (block_txs.find(tx_id) == block_txs.end()) {
-        diff++;
-      }
-    }
-
-    return diff;
-  }
-
-  int GetIntersectionSize(const std::set<int> &block_txs) const {
-    int count = 0;
-    for (int tx_id : block_txs) {
-      if (pending_txs.find(tx_id) != pending_txs.end()) {
-        count++;
-      }
-    }
-    return count;
-  }
-
-  bool HasTransaction(int tx_id) const {
-    return pending_txs.find(tx_id) != pending_txs.end();
-  }
-
-  int GetTotalSize() const {
-    int total = 0;
-    for (const auto &[id, tx] : pending_txs) {
-      total += tx.size_bytes;
-    }
-    return total;
-  }
-
-  int GetCount() const { return static_cast<int>(pending_txs.size()); }
-
-  void Clear() { pending_txs.clear(); }
-};
-
 struct Blockchain {
   Blockchain(int k = 0) : ghostdag_k(k), next_block_id(0) {
     Block genesis;
-    genesis.header.block_id = GetNextBlockId();
+    genesis.header.block_id =
+        0; // block_id = int(miner_id concat last_seem_block)
     genesis.header.miner_id = -1;
     genesis.header.time_created = 0.0;
     genesis.time_received = 0.0;
     genesis.size_in_bytes = 0;
     genesis.blue_score = 1;
     genesis.is_blue = true;
-    genesis.selected_parent = -1;
 
     blocks[genesis.header.block_id] = genesis;
     tips.insert(genesis.header.block_id);
@@ -304,6 +166,4 @@ struct Blockchain {
 
   int SelectTip();
   std::vector<int> ComputeGHOSTDAGOrdering();
-
-  int GetNextBlockId() { return next_block_id++; }
 };

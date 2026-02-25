@@ -1,7 +1,7 @@
 #include "node.h"
 
 #include "dag.h"
-#include "json.h"
+#include "thirdparty/json.h"
 
 #include "ns3/address-utils.h"
 #include "ns3/address.h"
@@ -40,16 +40,6 @@ TypeId GhostDagNode::GetTypeId() {
                         AddressValue(),
                         MakeAddressAccessor(&GhostDagNode::m_local),
                         MakeAddressChecker())
-          .AddAttribute("IsMiner", "Whether the node should mine or not.",
-                        BooleanValue(false),
-                        MakeBooleanAccessor(&GhostDagNode::m_is_miner),
-                        MakeBooleanChecker())
-          .AddAttribute("MineNotSynced",
-                        "Whether the node should mine while still syncing with "
-                        "DAG or not.",
-                        BooleanValue(false),
-                        MakeBooleanAccessor(&GhostDagNode::m_mine_not_synced),
-                        MakeBooleanChecker())
           .AddAttribute("InvTimeoutMinutes",
                         "The timeout of inv messages in minutes",
                         TimeValue(Minutes(20)),
@@ -77,24 +67,17 @@ TypeId GhostDagNode::GetTypeId() {
 }
 
 GhostDagNode::GhostDagNode()
-    : m_is_miner(false), m_mine_not_synced(false),
-      m_average_transaction_size(522.4), m_transaction_index_size(2) {
+    : m_mempool(256), m_average_transaction_size(522.4),
+      m_transaction_index_size(2) {
   NS_LOG_FUNCTION(this);
   m_socket = nullptr;
-  m_mean_block_receive_time = 0;
-  m_previous_block_receive_time = 0;
-  m_mean_block_propagation_time = 0;
-  m_mean_block_size = 0;
 
   m_ghostdag_port = 16443;
   m_ghostdag_k = 10;
   m_seconds_per_min = 60;
-  m_count_bytes = 4;
   m_message_header_size = 90;
   m_inventory_size = 36;
-  m_get_headers_size = 72;
   m_headers_size = 81;
-  m_block_locator_size = 81;
 
   m_tid = TcpSocketFactory::GetTypeId();
 }
@@ -199,11 +182,6 @@ void GhostDagNode::StartApplication() {
   }
 
   if (m_node_stats) {
-    m_node_stats->node_id = GetNode()->GetId();
-    m_node_stats->mean_block_receive_time = 0;
-    m_node_stats->mean_block_propagation_time = 0;
-    m_node_stats->total_blocks = 0;
-    m_node_stats->connections = m_peers_addresses.size();
   }
   m_ping_event =
       Simulator::Schedule(Seconds(10.0), &GhostDagNode::PingPeers, this);
@@ -225,16 +203,9 @@ void GhostDagNode::StopApplication() {
 
   NS_LOG_WARN("\n\nGHOSTDAG NODE " << GetNode()->GetId() << ":");
   NS_LOG_WARN("Total Blocks in DAG = " << m_blockchain.blocks.size());
-  NS_LOG_WARN("Mean Block Receive Time = " << m_mean_block_receive_time << "s");
-  NS_LOG_WARN("Mean Block Propagation Time = " << m_mean_block_propagation_time
-                                               << "s");
-  NS_LOG_WARN("Mean Block Size = " << m_mean_block_size << " Bytes");
 
   // Update final stats
   if (m_node_stats) {
-    m_node_stats->mean_block_receive_time = m_mean_block_receive_time;
-    m_node_stats->mean_block_propagation_time = m_mean_block_propagation_time;
-    m_node_stats->total_blocks = m_blockchain.blocks.size();
   }
 }
 

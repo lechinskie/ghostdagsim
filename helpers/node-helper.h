@@ -1,6 +1,7 @@
 #pragma once
 
-#include "dag.h"
+#include "../dag.h"
+#include "../metrics.h"
 
 #include "ns3/application-container.h"
 #include "ns3/ipv4-address.h"
@@ -41,7 +42,6 @@ protected:
   virtual Ptr<Application> InstallPriv(Ptr<Node> node);
 
   ObjectFactory m_factory;
-  std::string m_protocol;
   Address m_address;
   std::vector<Ipv4Address> m_peers_addresses;
   std::map<Ipv4Address, double> m_peers_download_speeds;

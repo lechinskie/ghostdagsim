@@ -1,6 +1,8 @@
 #pragma once
 
 #include "dag.h"
+#include "mempool.h"
+#include "metrics.h"
 
 #include "ns3/application.h"
 #include "ns3/ipv4-address.h"
@@ -58,17 +60,7 @@ protected:
                              Address &from);
   void HandleTransaction(const Transaction &tx, Address &from);
 
-  // --- 3. GHOSTDAG Topology Handlers  ---
-  void HandleReqAntipast(const std::string &block_hash, Address &from);
   void CheckForMissingParents(const Block &new_block, Address &from);
-
-  // --- 4. IBD / Sync Handlers (Bootstrap) ---
-  void HandleReqHeaders(const std::string &locator_hash, Address &from);
-  void HandleBlockHeaders(const std::vector<BlockHeader> &headers,
-                          Address &from);
-  void HandleReqBlockBodies(const std::vector<std::string> &block_hashes,
-                            Address &from);
-  void HandleBlockBody(const std::set<Transaction> &body, Address &from);
 
   // --- Sending Helpers ---
   void SendMessage(enum Messages recv, enum Messages type, std::string payload,
@@ -78,7 +70,6 @@ protected:
 
   // --- Internal Logic & State Management ---
   void ValidateBlock(const Block &new_block);
-  void Unorphan(const Block &new_block);
   void AdvertiseNewBlock(const Block &new_block);
 
   // --- Timeout & Queue Management ---
@@ -98,18 +89,10 @@ protected:
   Address m_local;
   TypeId m_tid;
 
-  // Simulation stats
-  double m_mean_block_receive_time;
-  double m_previous_block_receive_time;
-  double m_mean_block_propagation_time;
-  double m_mean_block_size;
-
   // Core Structures
   Blockchain m_blockchain;
   Mempool m_mempool;
   Time m_inv_timeout_minutes;
-  bool m_is_miner;
-  bool m_mine_not_synced;
   double m_fixed_block_interval;
 
   // Network Params
@@ -132,19 +115,13 @@ protected:
   std::map<std::string, Block> m_only_headers_received;
 
   NodeStats *m_node_stats;
-  NodeState m_node_state;
-  std::vector<double> m_send_block_times;
-  std::vector<double> m_receive_block_times;
 
   int m_ghostdag_port;
   uint8_t m_ghostdag_k;
   int m_seconds_per_min;
-  int m_count_bytes;
   int m_message_header_size;
   int m_inventory_size;
-  int m_get_headers_size;
   int m_headers_size;
-  int m_block_locator_size;
 
   TracedCallback<Ptr<const Packet>, const Address &> m_rx_trace;
 };
