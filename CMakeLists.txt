@@ -38,3 +38,14 @@ build_exec(
   EXECUTABLE_DIRECTORY_PATH ${CMAKE_OUTPUT_DIRECTORY}/scratch/ghostdagsim
 )
 
+build_exec(
+  EXECNAME mempooltest
+  SOURCE_FILES tests/mempooltest.cc ${C_SOURCES_NO_MAIN}
+  LIBRARIES_TO_LINK ghostdag-helpers
+                    ${libcore}
+                    ${ns3-libs}
+                    ${ns3-contrib-libs}
+                    ${GTEST_LIBRARIES}
+  EXECUTABLE_DIRECTORY_PATH ${CMAKE_OUTPUT_DIRECTORY}/scratch/ghostdagsim
+)
+
