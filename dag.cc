@@ -77,104 +77,51 @@ std::set<int> Blockchain::GreedyBlueSet(int block_id) {
     return blue;
   }
 
-  int max_blue_parent = -1;
+  // Find best parent (B_max) - parent with largest blue set
   int max_blue_score = -1;
+  std::set<int> max_blue_set;
 
   for (int parent_id : blocks[block_id].header.parent_hashes) {
-    if (blocks[parent_id].blue_score > max_blue_score) {
-      max_blue_score = blocks[parent_id].blue_score;
-      max_blue_parent = parent_id;
+    std::set<int> parent_blue = CalculateBlueSet(parent_id);
+    if ((int)parent_blue.size() > max_blue_score) {
+      max_blue_score = parent_blue.size();
+      max_blue_set = parent_blue;
     }
   }
 
-  if (max_blue_parent != -1) {
-    std::set<int> parent_past = GetPast(max_blue_parent);
-    for (int bid : parent_past) {
-      if (blocks[bid].is_blue) {
-        blue.insert(bid);
-      }
-    }
-    if (blocks[max_blue_parent].is_blue) {
-      blue.insert(max_blue_parent);
-    }
-  }
+  // Initialize blue set from best parent
+  blue = max_blue_set;
 
-  for (int bid : past) {
-    if (blue.find(bid) == blue.end()) {
-      std::set<int> test_blue = blue;
-      test_blue.insert(bid);
-
-      int anticone_size = 0;
-      for (auto it1 = test_blue.begin(); it1 != test_blue.end(); ++it1) {
-        auto it2 = it1;
-        ++it2;
-        for (; it2 != test_blue.end(); ++it2) {
-          std::set<int> anticone = GetAnticone(*it1, *it2);
-          for (int ac : anticone) {
-            if (test_blue.find(ac) != test_blue.end()) {
-              anticone_size++;
-              if (anticone_size > ghostdag_k) {
-                break;
-              }
-            }
-          }
-          if (anticone_size > ghostdag_k) {
-            break;
-          }
-        }
-        if (anticone_size > ghostdag_k) {
-          break;
-        }
-      }
-
-      if (anticone_size <= ghostdag_k) {
-        blue.insert(bid);
-      }
-    }
-  }
-
-  // Check if block_id itself can be added to blue set
-  int current_anticone_size = 0;
-  for (auto it1 = blue.begin(); it1 != blue.end(); ++it1) {
-    auto it2 = it1;
-    ++it2;
-    for (; it2 != blue.end(); ++it2) {
-      std::set<int> anticone = GetAnticone(*it1, *it2);
-      for (int ac : anticone) {
-        if (blue.find(ac) != blue.end() || ac == block_id) {
-          current_anticone_size++;
-          if (current_anticone_size > ghostdag_k) {
-            break;
-          }
-        }
-      }
-      if (current_anticone_size > ghostdag_k) {
-        break;
-      }
-    }
-    if (current_anticone_size > ghostdag_k) {
-      break;
-    }
-  }
-
-  // Also check anticone between block_id and blue blocks
-  for (int blue_block : blue) {
-    std::set<int> anticone = GetAnticone(block_id, blue_block);
-    for (int ac : anticone) {
-      if (blue.find(ac) != blue.end()) {
-        current_anticone_size++;
-        if (current_anticone_size > ghostdag_k) {
-          break;
-        }
-      }
-    }
-    if (current_anticone_size > ghostdag_k) {
-      break;
-    }
-  }
-
-  if (current_anticone_size <= ghostdag_k) {
+  // Add block_id to blue set (B_max in paper)
+  // Check if adding block_id violates k-cluster with existing blue blocks
+  std::set<int> test_blue_with_block = blue;
+  test_blue_with_block.insert(block_id);
+  if (IsKCluster(test_blue_with_block)) {
     blue.insert(block_id);
+  }
+
+  // Get anticone of block_id relative to its parents
+  std::set<int> anticone_blocks;
+  for (int parent_id : blocks[block_id].header.parent_hashes) {
+    std::set<int> anticone = GetAnticone(block_id, parent_id);
+    anticone_blocks.insert(anticone.begin(), anticone.end());
+  }
+
+  // Filter anticone to only include blocks in past
+  std::set<int> anticone_in_past;
+  for (int bid : anticone_blocks) {
+    if (past.find(bid) != past.end()) {
+      anticone_in_past.insert(bid);
+    }
+  }
+
+  // For each block in anticone, try to add to blue set if k-cluster maintained
+  for (int bid : anticone_in_past) {
+    std::set<int> test_blue = blue;
+    test_blue.insert(bid);
+    if (IsKCluster(test_blue)) {
+      blue.insert(bid);
+    }
   }
 
   return blue;
@@ -369,22 +316,28 @@ std::vector<int> Blockchain::ComputeGHOSTDAGOrdering() {
 
 bool Blockchain::IsKCluster(const std::set<int> &blue_set) {
   for (int b1 : blue_set) {
-    for (int b2 : blue_set) {
-      if (b1 >= b2) {
+    std::set<int> anticone_b1;
+    std::set<int> past_b1 = GetPast(b1);
+    std::set<int> future_b1 = GetFuture(b1);
+
+    for (const auto &pair : blocks) {
+      int bid = pair.first;
+      if (bid == b1 || blue_set.find(bid) == blue_set.end()) {
         continue;
       }
-
-      std::set<int> anticone = GetAnticone(b1, b2);
-      int count = 0;
-      for (int bid : anticone) {
-        if (blue_set.find(bid) != blue_set.end()) {
-          count++;
-        }
+      std::set<int> past_bid = GetPast(bid);
+      std::set<int> future_bid = GetFuture(bid);
+      bool in_past_or_future_1 = (past_b1.find(bid) != past_b1.end()) ||
+                                 (future_b1.find(bid) != future_b1.end());
+      bool in_past_or_future_2 = (past_bid.find(b1) != past_bid.end()) ||
+                                 (future_bid.find(b1) != future_bid.end());
+      if (!in_past_or_future_1 && !in_past_or_future_2) {
+        anticone_b1.insert(bid);
       }
+    }
 
-      if (count > ghostdag_k) {
-        return false;
-      }
+    if ((int)anticone_b1.size() > ghostdag_k) {
+      return false;
     }
   }
   return true;
