@@ -1,5 +1,4 @@
 compile_commands.json
 *.xml
 .cache/
-Bitcoin-Simulator/
-docs/
+tests/build/
