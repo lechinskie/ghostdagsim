@@ -131,7 +131,7 @@ void Mempool::eraseTransactionsAscending(const uint32_t size) {
 
 void Mempool::eraseRandomTransactions(std::mt19937 randomGen,
                                       const uint32_t size) {
-  for (int i = 0; i < size; i++) {
+  for (int i = 0; i < (int)size; i++) {
     // Take random index in hash table
     size_t index = randomMempoolIndexGenerator(randomGen);
 
