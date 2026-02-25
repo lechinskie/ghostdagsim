@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dag.h"
+#include "../dag.h"
 #include "ipv4-address-helper-custom.h"
 
 #include "ns3/internet-stack-helper.h"

@@ -1,6 +1,6 @@
 #include "node-helper.h"
 
-#include "node.h"
+#include "../node.h"
 
 #include "ns3/inet-socket-address.h"
 #include "ns3/names.h"
@@ -18,7 +18,7 @@ GhostDagNodeHelper::GhostDagNodeHelper(
                     internet_speeds, stats);
 }
 
-GhostDagNodeHelper::GhostDagNodeHelper(void) {
+GhostDagNodeHelper::GhostDagNodeHelper() {
   m_factory.SetTypeId("ns3::GhostDagNode");
 }
 
