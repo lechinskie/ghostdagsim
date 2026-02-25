@@ -77,51 +77,104 @@ std::set<int> Blockchain::GreedyBlueSet(int block_id) {
     return blue;
   }
 
-  // Find best parent (B_max) - parent with largest blue set
+  int max_blue_parent = -1;
   int max_blue_score = -1;
-  std::set<int> max_blue_set;
 
   for (int parent_id : blocks[block_id].header.parent_hashes) {
-    std::set<int> parent_blue = CalculateBlueSet(parent_id);
-    if ((int)parent_blue.size() > max_blue_score) {
-      max_blue_score = parent_blue.size();
-      max_blue_set = parent_blue;
+    if (blocks[parent_id].blue_score > max_blue_score) {
+      max_blue_score = blocks[parent_id].blue_score;
+      max_blue_parent = parent_id;
     }
   }
 
-  // Initialize blue set from best parent
-  blue = max_blue_set;
+  if (max_blue_parent != -1) {
+    std::set<int> parent_past = GetPast(max_blue_parent);
+    for (int bid : parent_past) {
+      if (blocks[bid].is_blue) {
+        blue.insert(bid);
+      }
+    }
+    if (blocks[max_blue_parent].is_blue) {
+      blue.insert(max_blue_parent);
+    }
+  }
 
-  // Add block_id to blue set (B_max in paper)
-  // Check if adding block_id violates k-cluster with existing blue blocks
-  std::set<int> test_blue_with_block = blue;
-  test_blue_with_block.insert(block_id);
-  if (IsKCluster(test_blue_with_block)) {
+  for (int bid : past) {
+    if (blue.find(bid) == blue.end()) {
+      std::set<int> test_blue = blue;
+      test_blue.insert(bid);
+
+      int anticone_size = 0;
+      for (auto it1 = test_blue.begin(); it1 != test_blue.end(); ++it1) {
+        auto it2 = it1;
+        ++it2;
+        for (; it2 != test_blue.end(); ++it2) {
+          std::set<int> anticone = GetAnticone(*it1, *it2);
+          for (int ac : anticone) {
+            if (test_blue.find(ac) != test_blue.end()) {
+              anticone_size++;
+              if (anticone_size > ghostdag_k) {
+                break;
+              }
+            }
+          }
+          if (anticone_size > ghostdag_k) {
+            break;
+          }
+        }
+        if (anticone_size > ghostdag_k) {
+          break;
+        }
+      }
+
+      if (anticone_size <= ghostdag_k) {
+        blue.insert(bid);
+      }
+    }
+  }
+
+  // Check if block_id itself can be added to blue set
+  int current_anticone_size = 0;
+  for (auto it1 = blue.begin(); it1 != blue.end(); ++it1) {
+    auto it2 = it1;
+    ++it2;
+    for (; it2 != blue.end(); ++it2) {
+      std::set<int> anticone = GetAnticone(*it1, *it2);
+      for (int ac : anticone) {
+        if (blue.find(ac) != blue.end() || ac == block_id) {
+          current_anticone_size++;
+          if (current_anticone_size > ghostdag_k) {
+            break;
+          }
+        }
+      }
+      if (current_anticone_size > ghostdag_k) {
+        break;
+      }
+    }
+    if (current_anticone_size > ghostdag_k) {
+      break;
+    }
+  }
+
+  // Also check anticone between block_id and blue blocks
+  for (int blue_block : blue) {
+    std::set<int> anticone = GetAnticone(block_id, blue_block);
+    for (int ac : anticone) {
+      if (blue.find(ac) != blue.end()) {
+        current_anticone_size++;
+        if (current_anticone_size > ghostdag_k) {
+          break;
+        }
+      }
+    }
+    if (current_anticone_size > ghostdag_k) {
+      break;
+    }
+  }
+
+  if (current_anticone_size <= ghostdag_k) {
     blue.insert(block_id);
-  }
-
-  // Get anticone of block_id relative to its parents
-  std::set<int> anticone_blocks;
-  for (int parent_id : blocks[block_id].header.parent_hashes) {
-    std::set<int> anticone = GetAnticone(block_id, parent_id);
-    anticone_blocks.insert(anticone.begin(), anticone.end());
-  }
-
-  // Filter anticone to only include blocks in past
-  std::set<int> anticone_in_past;
-  for (int bid : anticone_blocks) {
-    if (past.find(bid) != past.end()) {
-      anticone_in_past.insert(bid);
-    }
-  }
-
-  // For each block in anticone, try to add to blue set if k-cluster maintained
-  for (int bid : anticone_in_past) {
-    std::set<int> test_blue = blue;
-    test_blue.insert(bid);
-    if (IsKCluster(test_blue)) {
-      blue.insert(bid);
-    }
   }
 
   return blue;

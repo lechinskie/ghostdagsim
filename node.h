@@ -60,22 +60,14 @@ protected:
                              Address &from);
   void HandleTransaction(const Transaction &tx, Address &from);
 
-  void CheckForMissingParents(const Block &new_block, Address &from);
-
   // --- Sending Helpers ---
   void SendMessage(enum Messages recv, enum Messages type, std::string payload,
                    Address &to);
   void BroadcastInvBlock(const std::string &block_hash);
   void BroadcastInvTransaction(const std::string &tx_hash);
 
-  // --- Internal Logic & State Management ---
-  void ValidateBlock(const Block &new_block);
-  void AdvertiseNewBlock(const Block &new_block);
-
   // --- Timeout & Queue Management ---
   void InvTimeoutExpired(std::string block_hash);
-  bool ReceivedButNotValidated(std::string block_hash);
-  void RemoveReceivedButNotValidated(std::string block_hash);
   bool OnlyHeadersReceived(std::string block_hash);
 
   // Metrics helpers
@@ -111,7 +103,6 @@ protected:
   std::map<std::string, std::vector<Address>> m_queue_inv;
   std::map<std::string, EventId> m_inv_timeouts;
   std::map<Address, std::string> m_buffered_data;
-  std::map<std::string, Block> m_received_not_validated;
   std::map<std::string, Block> m_only_headers_received;
 
   NodeStats *m_node_stats;

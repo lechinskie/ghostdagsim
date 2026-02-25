@@ -25,30 +25,39 @@ NS_LOG_COMPONENT_DEFINE("GhostDagSimulator");
 
 int main(int argc, char *argv[]) {
   LogComponentEnable("GhostDagNode", LOG_LEVEL_INFO);
-  // Simulation parameters
+  LogComponentEnable("GhostDagMiner", LOG_LEVEL_INFO);
+
   double tStart = GetWallTime();
   double tStartSimulation;
 
   const uint16_t ghostdagPort = 16433;
-  int targetNumberOfBlocks = 100;
-  double averageBlockGenIntervalSeconds = 1.0;
 
   int totalNoNodes = 10;
   int minConnectionsPerNode = -1;
   int maxConnectionsPerNode = -1;
-  int noMiners = 3;
+  int noMiners = 10;
+
   uint8_t ghostdagK = 10;
+
+  double lambda = 20.0;
+  double tau = 5.0;
+  int txsPerBlock = 100;
+  int mempoolSize = 10000;
+  double txFeeLambda = 150.0;
+  int targetNumberOfBlocks = 10000;
 
   double *minersHash;
   enum Region *minersRegions;
+  int *minersStrategies;
 
-  // Default miner configuration for GHOSTDAG
   double defaultMinersHash[] = {0.15, 0.15, 0.12, 0.12, 0.10,
                                 0.10, 0.08, 0.08, 0.05, 0.05};
 
   enum Region defaultMinersRegions[] = {
       NORTH_AMERICA, EUROPE,        ASIA_PACIFIC, NORTH_AMERICA, EUROPE,
       ASIA_PACIFIC,  NORTH_AMERICA, EUROPE,       ASIA_PACIFIC,  NORTH_AMERICA};
+
+  int defaultMinersStrategies[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
   double stop;
 
@@ -61,18 +70,21 @@ int main(int argc, char *argv[]) {
 
   Time::SetResolution(Time::NS);
 
-  // Command line arguments
   CommandLine cmd;
-  cmd.AddValue("blocks", "Number of blocks to generate", targetNumberOfBlocks);
   cmd.AddValue("nodes", "Total number of nodes", totalNoNodes);
   cmd.AddValue("miners", "Number of miners", noMiners);
   cmd.AddValue("minConnections", "Minimum connections per node",
                minConnectionsPerNode);
   cmd.AddValue("maxConnections", "Maximum connections per node",
                maxConnectionsPerNode);
-  cmd.AddValue("blockInterval", "Average block generation interval (seconds)",
-               averageBlockGenIntervalSeconds);
+  cmd.AddValue("lambda", "Block creation rate (seconds)", lambda);
+  cmd.AddValue("tau", "Propagation delay (seconds)", tau);
   cmd.AddValue("k", "GHOSTDAG k parameter", ghostdagK);
+  cmd.AddValue("txsPerBlock", "Transactions per block", txsPerBlock);
+  cmd.AddValue("mempoolSize", "Mempool size", mempoolSize);
+  cmd.AddValue("txFeeLambda", "Transaction fee exponential lambda",
+               txFeeLambda);
+  cmd.AddValue("blocks", "Number of blocks to generate", targetNumberOfBlocks);
 
   cmd.Parse(argc, argv);
 
@@ -81,28 +93,27 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
-  // Setup miner configuration
   minersHash = new double[noMiners];
   minersRegions = new enum Region[noMiners];
+  minersStrategies = new int[noMiners];
 
   if (noMiners <= 10) {
     for (int i = 0; i < noMiners; i++) {
       minersHash[i] = defaultMinersHash[i];
       minersRegions[i] = defaultMinersRegions[i];
+      minersStrategies[i] = defaultMinersStrategies[i];
     }
   } else {
     double hashPerMiner = 1.0 / noMiners;
     for (int i = 0; i < noMiners; i++) {
       minersHash[i] = hashPerMiner;
       minersRegions[i] = static_cast<Region>(i % 6);
+      minersStrategies[i] = 0;
     }
   }
 
-  stop = targetNumberOfBlocks * averageBlockGenIntervalSeconds / 60;
+  stop = targetNumberOfBlocks * lambda / 60.0;
   auto stats = new NodeStats[totalNoNodes];
-  // Initialize stats
-  for (int i = 0; i < totalNoNodes; i++) {
-  }
 
   GlobalValue::Bind("SimulatorImplementationType",
                     StringValue("ns3::DistributedSimulatorImpl"));
@@ -116,21 +127,22 @@ int main(int argc, char *argv[]) {
     std::cout << "Total Nodes: " << totalNoNodes << "\n";
     std::cout << "Miners: " << noMiners << "\n";
     std::cout << "GHOSTDAG k: " << (int)ghostdagK << "\n";
-    std::cout << "Block Interval: " << averageBlockGenIntervalSeconds << "s\n";
+    std::cout << "Lambda (block interval): " << lambda << "s\n";
+    std::cout << "Tau (propagation delay): " << tau << "s\n";
+    std::cout << "Txs per block: " << txsPerBlock << "\n";
+    std::cout << "Mempool size: " << mempoolSize << "\n";
+    std::cout << "Tx fee lambda: " << txFeeLambda << "\n";
     std::cout << "Target Blocks: " << targetNumberOfBlocks << "\n";
     std::cout << "Simulation Duration: " << stop << " minutes\n\n";
   }
 
-  // Create topology
   GhostDagTopologyHelper topologyHelper(systemCount, totalNoNodes, noMiners,
                                         minersRegions, minConnectionsPerNode,
-                                        maxConnectionsPerNode, 5.0, systemId);
+                                        maxConnectionsPerNode, tau, systemId);
 
-  // Install Internet stack
   InternetStackHelper stack;
   topologyHelper.InstallStack(stack);
 
-  // Assign IP addresses
   topologyHelper.AssignIpv4Addresses(
       Ipv4AddressHelperCustom("10.1.0.0", "255.255.255.0", false));
 
@@ -141,19 +153,23 @@ int main(int argc, char *argv[]) {
   peersUploadSpeeds = topologyHelper.GetPeersUploadSpeeds();
   nodesInternetSpeeds = topologyHelper.GetNodesInternetSpeeds();
 
-  // Install GHOSTDAG miners
   ApplicationContainer ghostdagMiners;
-  for (auto &miner : miners) {
-    Ptr<Node> targetNode = topologyHelper.GetNode(miner);
+  for (size_t i = 0; i < miners.size(); i++) {
+    uint32_t minerId = miners[i];
+    Ptr<Node> targetNode = topologyHelper.GetNode(minerId);
 
     if (systemId == targetNode->GetSystemId()) {
-      GhostDagNodeHelper minerHelper(
+      GhostDagMinerHelper minerHelper(
           InetSocketAddress(Ipv4Address::GetAny(), ghostdagPort),
-          nodesConnections[miner], peersDownloadSpeeds[miner],
-          peersUploadSpeeds[miner], nodesInternetSpeeds[miner], &stats[miner]);
+          nodesConnections[minerId], peersDownloadSpeeds[minerId],
+          peersUploadSpeeds[minerId], nodesInternetSpeeds[minerId],
+          &stats[minerId]);
 
-      // Configure miner-specific attributes
       minerHelper.SetAttribute("Kghostdag", UintegerValue(ghostdagK));
+      minerHelper.SetAttribute("BlockGenInterval", DoubleValue(lambda));
+      minerHelper.SetAttribute("TxsPerBlock", UintegerValue(txsPerBlock));
+      minerHelper.SetAttribute("TxSelectionStrategy",
+                               UintegerValue(minersStrategies[i]));
 
       ghostdagMiners.Add(minerHelper.Install(targetNode));
     }
@@ -162,9 +178,7 @@ int main(int argc, char *argv[]) {
   ghostdagMiners.Start(Seconds(0));
   ghostdagMiners.Stop(Minutes(stop));
 
-  // Install regular GHOSTDAG nodes
   ApplicationContainer ghostdagNodes;
-
   for (auto &node : nodesConnections) {
     Ptr<Node> targetNode = topologyHelper.GetNode(node.first);
 
@@ -204,6 +218,7 @@ int main(int argc, char *argv[]) {
   delete[] stats;
   delete[] minersHash;
   delete[] minersRegions;
+  delete[] minersStrategies;
 
   return 0;
 }

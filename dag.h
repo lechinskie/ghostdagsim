@@ -76,6 +76,8 @@ inline static std::string GetMessageName(Messages msg) {
 struct Transaction {
   int tx_id;
   int size_bytes;
+
+  bool operator<(const Transaction &other) const { return tx_id < other.tx_id; }
 };
 
 struct BlockHeader {
