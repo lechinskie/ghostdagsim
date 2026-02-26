@@ -1,3 +1,10 @@
+/*
+ * This file is originally created for help create nodes for
+ * [Bitcoin-Simulator](https://github.com/arthurgervais/Bitcoin-Simulator) by
+ * Arthur Gervais Revised and Re-impl for ghostdag nodes and helpers by
+ * Eramoss - <eduardo_ramos@edu.univali.br>
+ * */
+
 #pragma once
 
 #include "../dag.h"
