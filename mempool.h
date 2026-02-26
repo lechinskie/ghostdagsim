@@ -4,7 +4,7 @@
  * can be included in a block
  * @author Tomas Hladky <xhladk15@stud.fit.vutbr.cz>
  * @author Martin Peresini <iperesini@fit.vut.cz>
- * @author Eramoss <eduardo_ramos@edu.univali.br>
+ * @author Eramoss <eduardo_ramos@edu.univali.br> revised
  * @date 2026
  */
 

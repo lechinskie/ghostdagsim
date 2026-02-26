@@ -13,10 +13,10 @@ GhostDagNodeHelper::GhostDagNodeHelper(
     Address address, std::vector<Ipv4Address> &peers,
     std::map<Ipv4Address, double> &peers_download_speeds,
     std::map<Ipv4Address, double> &peers_upload_speeds,
-    NodeInternetSpeeds &internet_speeds, NodeStats *stats) {
+    NodeInternetSpeeds &internet_speeds) {
   m_factory.SetTypeId("ns3::GhostDagNode");
   commonConstructor(address, peers, peers_download_speeds, peers_upload_speeds,
-                    internet_speeds, stats);
+                    internet_speeds);
 }
 
 GhostDagNodeHelper::GhostDagNodeHelper() {
@@ -27,13 +27,12 @@ void GhostDagNodeHelper::commonConstructor(
     Address address, std::vector<Ipv4Address> &peers,
     std::map<Ipv4Address, double> &peers_download_speeds,
     std::map<Ipv4Address, double> &peers_upload_speeds,
-    NodeInternetSpeeds &internet_speeds, NodeStats *stats) {
+    NodeInternetSpeeds &internet_speeds) {
   m_address = address;
   m_peers_addresses = peers;
   m_peers_download_speeds = peers_download_speeds;
   m_peers_upload_speeds = peers_upload_speeds;
   m_internet_speeds = internet_speeds;
-  m_node_stats = stats;
 
   m_factory.Set("Local", AddressValue(m_address));
 }
@@ -54,7 +53,7 @@ ApplicationContainer GhostDagNodeHelper::Install(std::string node_name) {
 
 ApplicationContainer GhostDagNodeHelper::Install(NodeContainer c) {
   ApplicationContainer apps;
-  for (NodeContainer::Iterator i = c.Begin(); i != c.End(); ++i) {
+  for (auto i = c.Begin(); i != c.End(); ++i) {
     apps.Add(InstallPriv(*i));
   }
   return apps;
@@ -67,14 +66,11 @@ Ptr<Application> GhostDagNodeHelper::InstallPriv(Ptr<Node> node) {
   app->SetPeersDownloadSpeeds(m_peers_download_speeds);
   app->SetPeersUploadSpeeds(m_peers_upload_speeds);
   app->SetNodeInternetSpeeds(m_internet_speeds);
-  app->SetNodeStats(m_node_stats);
 
   node->AddApplication(app);
 
   return app;
 }
-
-// --- Setters for late-binding or topology updates ---
 
 void GhostDagNodeHelper::SetPeersAddresses(
     std::vector<Ipv4Address> &peers_addresses) {
@@ -96,20 +92,14 @@ void GhostDagNodeHelper::SetNodeInternetSpeeds(
   m_internet_speeds = internet_speeds;
 }
 
-void GhostDagNodeHelper::SetNodeStats(NodeStats *node_stats) {
-  m_node_stats = node_stats;
-}
-
-// GhostDagMinerHelper implementation
-
 GhostDagMinerHelper::GhostDagMinerHelper(
     Address address, std::vector<Ipv4Address> &peers,
     std::map<Ipv4Address, double> &peers_download_speeds,
     std::map<Ipv4Address, double> &peers_upload_speeds,
-    NodeInternetSpeeds &internet_speeds, NodeStats *stats) {
+    NodeInternetSpeeds &internet_speeds) {
   m_factory.SetTypeId("ns3::GhostDagMiner");
   commonConstructor(address, peers, peers_download_speeds, peers_upload_speeds,
-                    internet_speeds, stats);
+                    internet_speeds);
 }
 
 GhostDagMinerHelper::GhostDagMinerHelper() {
@@ -123,7 +113,6 @@ Ptr<Application> GhostDagMinerHelper::InstallPriv(Ptr<Node> node) {
   app->SetPeersDownloadSpeeds(m_peers_download_speeds);
   app->SetPeersUploadSpeeds(m_peers_upload_speeds);
   app->SetNodeInternetSpeeds(m_internet_speeds);
-  app->SetNodeStats(m_node_stats);
 
   node->AddApplication(app);
 

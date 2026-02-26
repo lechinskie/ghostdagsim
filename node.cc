@@ -138,11 +138,6 @@ void GhostDagNode::SetNodeInternetSpeeds(
   m_upload_speed = internet_speeds.upload_speed * 1000000 / 8;
 }
 
-void GhostDagNode::SetNodeStats(NodeStats *node_stats) {
-  NS_LOG_FUNCTION(this);
-  m_node_stats = node_stats;
-}
-
 // ============================================================================
 // Application Lifecycle
 // ============================================================================
@@ -201,9 +196,6 @@ void GhostDagNode::StartApplication() {
         InetSocketAddress(peer_addr, m_ghostdag_port));
   }
 
-  if (m_node_stats) {
-  }
-
   StartTransactionGeneration();
 }
 
@@ -222,19 +214,6 @@ void GhostDagNode::StopApplication() {
   NS_LOG_WARN("Total Blocks in DAG = " << m_blockchain.blocks.size());
 
   StopTransactionGeneration();
-
-  if (m_node_stats) {
-    m_node_stats->dag_size = m_blockchain.blocks.size();
-    m_node_stats->dag_tips = m_blockchain.tips.size();
-    m_node_stats->mempool_size = m_mempool.size();
-    m_node_stats->txs_generated = m_txsGenerated;
-  }
-
-  GetMetricsCollector().RecordNodeStats(
-      GetNode()->GetId(), m_blockchain.blocks.size(), m_blockchain.tips.size(),
-      m_mempool.size(), 0,
-      m_node_stats ? m_node_stats->blocks_received.load() : 0, 0, 0,
-      m_txsGenerated, 0, 0, 0, 0, 0, 0);
 }
 
 void GhostDagNode::HandleRead(Ptr<Socket> socket) {
@@ -388,8 +367,6 @@ void GhostDagNode::HandleInvRelayBlock(const std::string &block_hash,
                                        Address &from) {
   NS_LOG_FUNCTION(this << block_hash);
 
-  GetMetricsCollector().RecordMessageReceived(GetNode()->GetId(), "INV");
-
   int block_id = std::stoi(block_hash);
 
   if (!m_blockchain.HasBlock(block_id) && !m_blockchain.IsOrphan(block_id)) {
@@ -397,8 +374,6 @@ void GhostDagNode::HandleInvRelayBlock(const std::string &block_hash,
     req["block_hash"] = block_hash;
 
     SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, req.dump(), from);
-
-    GetMetricsCollector().RecordMessageSent(GetNode()->GetId(), "REQ");
 
     m_queue_inv[block_hash].push_back(from);
     m_inv_timeouts[block_hash] =
@@ -410,8 +385,6 @@ void GhostDagNode::HandleInvRelayBlock(const std::string &block_hash,
 void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
                                        Address &from) {
   NS_LOG_FUNCTION(this << block_hash);
-
-  GetMetricsCollector().RecordMessageReceived(GetNode()->GetId(), "REQ");
 
   int block_id = std::stoi(block_hash);
 
@@ -436,7 +409,6 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
     }
 
     SendMessage(NO_MESSAGE, BLOCK, blockMsg.dump(), from);
-    GetMetricsCollector().RecordMessageSent(GetNode()->GetId(), "BLOCK");
   }
 }
 
@@ -450,70 +422,18 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
   InetSocketAddress peer = InetSocketAddress::ConvertFrom(from);
   block.received_from = peer.GetIpv4();
 
-  uint32_t blockSize = 0;
   for (const auto &tx : block.transactions) {
-    blockSize += tx.size_bytes;
     if (m_mempool.size() < (size_t)m_mempoolSize) {
       uint64_t txId = tx.tx_id;
       uint32_t fee = 150;
       m_mempool.insert(GetNode()->GetId(), txId, fee);
     }
   }
-  blockSize += block.header.parent_hashes.size() * 4 + 50;
 
-  bool hadBlock = m_blockchain.HasBlock(block.header.block_id);
-  bool wasOrphan = m_blockchain.IsOrphan(block.header.block_id);
-
-  int prevTipCount = m_blockchain.tips.size();
   m_blockchain.AddBlock(block);
-  int newTipCount = m_blockchain.tips.size();
 
-  if (m_node_stats) {
-    m_node_stats->blocks_received++;
-    m_node_stats->total_bytes_received += blockSize;
-    m_node_stats->txs_received += block.transactions.size();
-  }
-
-  if (m_node_stats) {
-    m_node_stats->dag_size = m_blockchain.blocks.size();
-    m_node_stats->dag_tips = m_blockchain.tips.size();
-    m_node_stats->mempool_size = m_mempool.size();
-    m_node_stats->txs_generated = m_txsGenerated;
-  }
-
-  GetMetricsCollector().RecordNodeStats(
-      GetNode()->GetId(), m_blockchain.blocks.size(), m_blockchain.tips.size(),
-      m_mempool.size(), 0,
-      m_node_stats ? m_node_stats->blocks_received.load() : 0, 0, 0,
-      m_txsGenerated, 0, 0, 0, 0, 0, 0);
-
-  GetMetricsCollector().RecordMessageReceived(GetNode()->GetId(), "BLOCK");
-
-  if (!hadBlock && !wasOrphan) {
-    NS_LOG_INFO("Node " << GetNode()->GetId() << " added new block "
-                        << block.header.block_id << " to DAG (tips: "
-                        << prevTipCount << " -> " << newTipCount << ")");
-
-    GetMetricsCollector().RecordBlockReceived(block.header.block_id,
-                                              GetNode()->GetId(), currentTime,
-                                              blockSize, false);
-
-    std::string blockHash = std::to_string(block.header.block_id);
-    BroadcastInvBlock(blockHash);
-  } else if (!hadBlock && wasOrphan) {
-    NS_LOG_INFO("Node " << GetNode()->GetId() << " resolved orphan block "
-                        << block.header.block_id);
-    GetMetricsCollector().RecordBlockReceived(block.header.block_id,
-                                              GetNode()->GetId(), currentTime,
-                                              blockSize, false);
-  } else {
-    GetMetricsCollector().RecordBlockReceived(block.header.block_id,
-                                              GetNode()->GetId(), currentTime,
-                                              blockSize, true);
-    if (m_node_stats) {
-      m_node_stats->redundant_bytes_received += blockSize;
-    }
-  }
+  std::string blockHash = std::to_string(block.header.block_id);
+  BroadcastInvBlock(blockHash);
 }
 
 void GhostDagNode::InvTimeoutExpired(std::string block_hash) {
@@ -549,10 +469,9 @@ void GhostDagNode::BroadcastInvBlock(const std::string &block_hash) {
 
   for (const auto &peer_addr : m_peers_addresses) {
     InetSocketAddress peer = InetSocketAddress(peer_addr, m_ghostdag_port);
-    Address addr = Address(peer);
+    auto addr = Address(peer);
     SendMessage(NO_MESSAGE, INV_RELAY_BLOCK, inv.dump(), addr);
   }
-  GetMetricsCollector().RecordMessageSent(GetNode()->GetId(), "INV");
 }
 
 void GhostDagNode::StartTransactionGeneration() {

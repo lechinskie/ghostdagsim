@@ -28,7 +28,6 @@ public:
   void SetPeersUploadSpeeds(
       const std::map<Ipv4Address, double> &peers_upload_speeds);
   void SetNodeInternetSpeeds(const NodeInternetSpeeds &internet_speeds);
-  void SetNodeStats(NodeStats *node_stats);
 
 protected:
   // --- Application Lifecycle ---
@@ -107,8 +106,6 @@ protected:
   std::map<std::string, EventId> m_inv_timeouts;
   std::map<Address, std::string> m_buffered_data;
   std::map<std::string, Block> m_only_headers_received;
-
-  NodeStats *m_node_stats;
 
   int m_ghostdag_port;
   uint8_t m_ghostdag_k;
