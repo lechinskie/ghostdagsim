@@ -106,7 +106,7 @@ struct Block {
   std::set<Transaction> transactions;
   int size_in_bytes;
 
-  // just metrics popouse, not part of packet
+  // just metrics porpouse, not part of packet
   double time_received;
   ns3::Ipv4Address received_from;
   int blue_score;
@@ -125,7 +125,6 @@ struct Block {
 };
 
 struct Blockchain {
-  // ── Constructor ──────────────────────────────────────────────────────────
   Blockchain(int k = 0) : ghostdag_k(k), next_block_id(0) {
     Block genesis;
     genesis.header.block_id = 0;
@@ -141,7 +140,6 @@ struct Blockchain {
   }
   virtual ~Blockchain() {}
 
-  // ── Public state ─────────────────────────────────────────────────────────
   int ghostdag_k;
   int next_block_id;
   std::set<int> tips;
@@ -149,7 +147,6 @@ struct Blockchain {
   std::map<int, Block> blocks;
   std::map<int, Block> orphans;
 
-  // ── Public API (original signatures preserved) ───────────────────────────
   int GetDagWidth() const;
   bool HasBlock(int block_id) const;
   bool IsRed(int block_id) const;
@@ -166,7 +163,6 @@ struct Blockchain {
 
   std::set<int> CalculateBlueSet(int block_id);
   std::set<int> GreedyBlueSet(int block_id);
-  // tip-rooted variant used internally; exposed to match your original header
   std::set<int> GreedyBlueSetFromTip(int tip_id, const std::set<int> &past_set);
 
   int CalculateBlueScore(int block_id, const std::set<int> &blue_set);
@@ -177,10 +173,8 @@ struct Blockchain {
   std::vector<int> ComputeGHOSTDAGOrdering();
 
 private:
-  // ── Past cache ────────────────────────────────────────────────────────────
   std::map<int, std::set<int>> past_cache_;
 
-  // ── Internal helpers ─────────────────────────────────────────────────────
   std::vector<int> TopologicalSort(const std::set<int> &subset);
   void ProcessOrphans();
 };
