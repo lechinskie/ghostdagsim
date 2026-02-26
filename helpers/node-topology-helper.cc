@@ -38,9 +38,10 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
     uint32_t noCpus, uint32_t totalNoNodes, uint32_t noMiners,
     enum Region *minersRegions, int minConnectionsPerNode,
     int maxConnectionsPerNode, double latencyParetoShapeDivider,
-    uint32_t systemId)
+    double tau_multiplier, uint32_t systemId)
     : m_totalNoNodes(totalNoNodes), m_noMiners(noMiners), m_noCpus(noCpus),
       m_latencyParetoShapeDivider(latencyParetoShapeDivider),
+      m_tau_multiplier(tau_multiplier),
       m_minConnectionsPerNode(minConnectionsPerNode),
       m_maxConnectionsPerNode(maxConnectionsPerNode),
       m_minConnectionsPerMiner(700), m_maxConnectionsPerMiner(800),
@@ -1407,15 +1408,14 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
 
   tStart = GetWallTime();
 
-  // Create first the links between miners
-  for (auto miner = m_miners.begin(); miner != m_miners.end(); miner++) {
+  double totalMinerBandwidth = 0;
+  double totalMinerLatency = 0;
 
+  for (auto miner = m_miners.begin(); miner != m_miners.end(); miner++) {
     for (auto it = m_nodesConnections[*miner].begin();
          it != m_nodesConnections[*miner].begin() + m_miners.size() - 1; it++) {
-      if (*it > *miner) // Do not recreate links
-      {
-        NetDeviceContainer newDevices;
 
+      if (*it > *miner) {
         m_totalNoLinks++;
 
         double bandwidth = std::min(
@@ -1427,77 +1427,63 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
                          .upload_speed,
                      m_nodesInternetSpeeds[m_nodes.at(*it).Get(0)->GetId()]
                          .download_speed));
-        bandwidthStream.str("");
-        bandwidthStream.clear();
-        bandwidthStream << bandwidth << "Mbps";
+        totalMinerBandwidth += bandwidth;
 
-        latencyStringStream.str("");
-        latencyStringStream.clear();
+        double currentLatency = 0;
+        double baseLatency = m_regionLatencies
+            [m_nodesRegion[(m_nodes.at(*miner).Get(0))->GetId()]]
+            [m_nodesRegion[(m_nodes.at(*it).Get(0))->GetId()]];
 
         if (m_latencyParetoShapeDivider > 0) {
           Ptr<ParetoRandomVariable> paretoDistribution =
               CreateObject<ParetoRandomVariable>();
+          paretoDistribution->SetAttribute("Scale", DoubleValue(baseLatency));
           paretoDistribution->SetAttribute(
-              "Scale",
-              DoubleValue(
-                  m_regionLatencies
-                      [m_nodesRegion[(m_nodes.at(*miner).Get(0))->GetId()]]
-                      [m_nodesRegion[(m_nodes.at(*it).Get(0))->GetId()]]));
-          paretoDistribution->SetAttribute(
-              "Shape",
-              DoubleValue(
-                  m_regionLatencies
-                      [m_nodesRegion[(m_nodes.at(*miner).Get(0))->GetId()]]
-                      [m_nodesRegion[(m_nodes.at(*it).Get(0))->GetId()]] /
-                  m_latencyParetoShapeDivider));
-          latencyStringStream << paretoDistribution->GetValue() << "ms";
+              "Shape", DoubleValue(baseLatency / m_latencyParetoShapeDivider));
+          currentLatency = paretoDistribution->GetValue() * m_tau_multiplier;
         } else {
-          latencyStringStream
-              << m_regionLatencies
-                     [m_nodesRegion[(m_nodes.at(*miner).Get(0))->GetId()]]
-                     [m_nodesRegion[(m_nodes.at(*it).Get(0))->GetId()]]
-              << "ms";
+          currentLatency = baseLatency * m_tau_multiplier;
         }
+        totalMinerLatency += currentLatency;
+
+        bandwidthStream.str("");
+        bandwidthStream.clear();
+        bandwidthStream << bandwidth << "Mbps";
+        latencyStringStream.str("");
+        latencyStringStream.clear();
+        latencyStringStream << currentLatency << "ms";
 
         pointToPoint.SetDeviceAttribute("DataRate",
                                         StringValue(bandwidthStream.str()));
         pointToPoint.SetChannelAttribute(
             "Delay", StringValue(latencyStringStream.str()));
 
-        newDevices.Add(pointToPoint.Install(m_nodes.at(*miner).Get(0),
-                                            m_nodes.at(*it).Get(0)));
+        NetDeviceContainer newDevices = pointToPoint.Install(
+            m_nodes.at(*miner).Get(0), m_nodes.at(*it).Get(0));
         m_devices.push_back(newDevices);
-        /* 		if (m_systemId == 0)
-                  std::cout << "Creating link " << m_totalNoLinks << " between
-           nodes "
-                            << (m_nodes.at (*miner).Get (0))->GetId() << " ("
-                            <<
-           getBitcoinRegion(getBitcoinEnum(m_bitcoinNodesRegion[(m_nodes.at
-           (*miner).Get (0))->GetId()]))
-                            << ") and node " << (m_nodes.at (*it).Get
-           (0))->GetId() << " ("
-                            <<
-           getBitcoinRegion(getBitcoinEnum(m_bitcoinNodesRegion[(m_nodes.at
-           (*it).Get (0))->GetId()]))
-                            << ") with latency = " << latencyStringStream.str()
-                            << " and bandwidth = " << bandwidthStream.str() <<
-           ".\n"; */
       }
     }
   }
 
-  for (auto &node : m_nodesConnections) {
+  double mean_miner_data_rate =
+      (m_totalNoLinks > 0) ? (totalMinerBandwidth / m_totalNoLinks) : 0;
+  double mean_miner_delay =
+      (m_totalNoLinks > 0) ? (totalMinerLatency / m_totalNoLinks) : 0;
 
+  double totalNodeBandwidth = 0;
+  double totalNodeLatency = 0;
+  int nodeLinkCount = 0;
+
+  for (auto &node : m_nodesConnections) {
     for (auto it = node.second.begin(); it != node.second.end(); it++) {
 
       if (*it > node.first &&
           (std::find(m_miners.begin(), m_miners.end(), *it) == m_miners.end() ||
            std::find(m_miners.begin(), m_miners.end(), node.first) ==
-               m_miners.end())) // Do not recreate links
-      {
+               m_miners.end())) {
         NetDeviceContainer newDevices;
-
         m_totalNoLinks++;
+        nodeLinkCount++;
 
         double bandwidth = std::min(
             std::min(
@@ -1509,37 +1495,31 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
                          .upload_speed,
                      m_nodesInternetSpeeds[m_nodes.at(*it).Get(0)->GetId()]
                          .download_speed));
-        bandwidthStream.str("");
-        bandwidthStream.clear();
-        bandwidthStream << bandwidth << "Mbps";
+        totalNodeBandwidth += bandwidth;
 
-        latencyStringStream.str("");
-        latencyStringStream.clear();
+        double currentLatency = 0;
+        double baseLatency = m_regionLatencies
+            [m_nodesRegion[(m_nodes.at(node.first).Get(0))->GetId()]]
+            [m_nodesRegion[(m_nodes.at(*it).Get(0))->GetId()]];
 
         if (m_latencyParetoShapeDivider > 0) {
           Ptr<ParetoRandomVariable> paretoDistribution =
               CreateObject<ParetoRandomVariable>();
+          paretoDistribution->SetAttribute("Scale", DoubleValue(baseLatency));
           paretoDistribution->SetAttribute(
-              "Scale",
-              DoubleValue(
-                  m_regionLatencies
-                      [m_nodesRegion[(m_nodes.at(node.first).Get(0))->GetId()]]
-                      [m_nodesRegion[(m_nodes.at(*it).Get(0))->GetId()]]));
-          paretoDistribution->SetAttribute(
-              "Shape",
-              DoubleValue(
-                  m_regionLatencies
-                      [m_nodesRegion[(m_nodes.at(node.first).Get(0))->GetId()]]
-                      [m_nodesRegion[(m_nodes.at(*it).Get(0))->GetId()]] /
-                  m_latencyParetoShapeDivider));
-          latencyStringStream << paretoDistribution->GetValue() << "ms";
+              "Shape", DoubleValue(baseLatency / m_latencyParetoShapeDivider));
+          currentLatency = paretoDistribution->GetValue() * m_tau_multiplier;
         } else {
-          latencyStringStream
-              << m_regionLatencies
-                     [m_nodesRegion[(m_nodes.at(node.first).Get(0))->GetId()]]
-                     [m_nodesRegion[(m_nodes.at(*it).Get(0))->GetId()]]
-              << "ms";
+          currentLatency = baseLatency * m_tau_multiplier;
         }
+        totalNodeLatency += currentLatency;
+
+        bandwidthStream.str("");
+        bandwidthStream.clear();
+        bandwidthStream << bandwidth << "Mbps";
+        latencyStringStream.str("");
+        latencyStringStream.clear();
+        latencyStringStream << currentLatency << "ms";
 
         pointToPoint.SetDeviceAttribute("DataRate",
                                         StringValue(bandwidthStream.str()));
@@ -1549,31 +1529,29 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
         newDevices.Add(pointToPoint.Install(m_nodes.at(node.first).Get(0),
                                             m_nodes.at(*it).Get(0)));
         m_devices.push_back(newDevices);
-        /* 		if (m_systemId == 0)
-                  std::cout << "Creating link " << m_totalNoLinks << " between
-           nodes "
-                            << (m_nodes.at (node.first).Get (0))->GetId() << "
-           ("
-                            <<
-           getBitcoinRegion(getBitcoinEnum(m_bitcoinNodesRegion[(m_nodes.at
-           (node.first).Get (0))->GetId()]))
-                            << ") and node " << (m_nodes.at (*it).Get
-           (0))->GetId() << " ("
-                            <<
-           getBitcoinRegion(getBitcoinEnum(m_bitcoinNodesRegion[(m_nodes.at
-           (*it).Get (0))->GetId()]))
-                            << ") with latency = " << latencyStringStream.str()
-                            << " and bandwidth = " << bandwidthStream.str() <<
-           ".\n"; */
       }
     }
   }
+
+  double mean_node_data_rate =
+      (nodeLinkCount > 0) ? (totalNodeBandwidth / nodeLinkCount) : 0;
+  double mean_node_delay =
+      (nodeLinkCount > 0) ? (totalNodeLatency / nodeLinkCount) : 0;
 
   tFinish = GetWallTime();
 
   if (m_systemId == 0)
     std::cout << "The total number of links is " << m_totalNoLinks << " ("
               << tFinish - tStart << "s).\n";
+
+  std::cout << "Mean Miner Data Rate: " << mean_miner_data_rate << " Mbps"
+            << std::endl;
+  std::cout << "Mean Miner Delay:     " << mean_miner_delay << " ms"
+            << std::endl;
+
+  std::cout << "Mean Node Data Rate: " << mean_node_data_rate << " Mbps"
+            << std::endl;
+  std::cout << "Mean Node Delay:     " << mean_node_delay << " ms" << std::endl;
 }
 
 GhostDagTopologyHelper::~GhostDagTopologyHelper() {

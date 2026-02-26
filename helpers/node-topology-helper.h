@@ -55,12 +55,15 @@ public:
    * \param maxConnectionsPerNode Maximum connections for regular nodes
    * \param latencyParetoShapeDivider Pareto distribution parameter for latency
    * variation
+   * \param tau_multiplier parameter for delay multiplier after distribution
+   * applied variation
    * \param systemId System identifier for distributed simulations
    */
   GhostDagTopologyHelper(uint32_t noCpus, uint32_t totalNoNodes,
                          uint32_t noMiners, enum Region *minersRegions,
                          int minConnectionsPerNode, int maxConnectionsPerNode,
-                         double latencyParetoShapeDivider, uint32_t systemId);
+                         double latencyParetoShapeDivider,
+                         double tau_multiplier, uint32_t systemId);
 
   ~GhostDagTopologyHelper();
 
@@ -150,6 +153,7 @@ private:
   uint32_t m_noMiners;                //!< Number of mining nodes
   uint32_t m_noCpus;                  //!< Number of CPUs for simulation
   double m_latencyParetoShapeDivider; //!< Pareto shape parameter for latency
+  double m_tau_multiplier;            //!< multiplier delay
   int m_minConnectionsPerNode;        //!< Min connections per regular node
   int m_maxConnectionsPerNode;        //!< Max connections per regular node
   int m_minConnectionsPerMiner;       //!< Min connections per miner
