@@ -30,8 +30,4 @@ scrape_configs:
     scrape_interval: 2s
     scrape_timeout: 1s
 
-  - job_name: 'node-exporter'
-    static_configs:
-      - targets: ['node-exporter:9100']
-        labels:
-          service: 'node-exporter'
+

@@ -43,15 +43,6 @@ services:
     depends_on:
       - prometheus
 
-  node-exporter:
-    image: prom/node-exporter:v1.7.0
-    container_name: ghostdag-node-exporter
-    ports:
-      - "9100:9100"
-    networks:
-      - ghostdag-net
-    restart: unless-stopped
-
 networks:
   ghostdag-net:
     driver: bridge
