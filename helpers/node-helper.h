@@ -16,14 +16,14 @@ public:
   GhostDagNodeHelper(Address address, std::vector<Ipv4Address> &peers,
                      std::map<Ipv4Address, double> &peers_download_speeds,
                      std::map<Ipv4Address, double> &peers_upload_speeds,
-                     NodeInternetSpeeds &internetSpeeds, NodeStats *stats);
+                     NodeInternetSpeeds &internetSpeeds);
 
   GhostDagNodeHelper();
 
   void commonConstructor(Address address, std::vector<Ipv4Address> &peers,
                          std::map<Ipv4Address, double> &peers_download_speeds,
                          std::map<Ipv4Address, double> &peers_upload_speeds,
-                         NodeInternetSpeeds &internet_speeds, NodeStats *stats);
+                         NodeInternetSpeeds &internet_speeds);
 
   void SetAttribute(std::string name, const AttributeValue &value);
 
@@ -36,7 +36,6 @@ public:
   SetPeersDownloadSpeeds(std::map<Ipv4Address, double> &peers_download_speeds);
   void SetPeersUploadSpeeds(std::map<Ipv4Address, double> &peers_upload_speeds);
   void SetNodeInternetSpeeds(NodeInternetSpeeds &internetSpeeds);
-  void SetNodeStats(NodeStats *node_stats);
 
 protected:
   virtual Ptr<Application> InstallPriv(Ptr<Node> node);
@@ -47,7 +46,6 @@ protected:
   std::map<Ipv4Address, double> m_peers_download_speeds;
   std::map<Ipv4Address, double> m_peers_upload_speeds;
   NodeInternetSpeeds m_internet_speeds;
-  NodeStats *m_node_stats;
 };
 
 class GhostDagMinerHelper : public GhostDagNodeHelper {
@@ -55,7 +53,7 @@ public:
   GhostDagMinerHelper(Address address, std::vector<Ipv4Address> &peers,
                       std::map<Ipv4Address, double> &peers_download_speeds,
                       std::map<Ipv4Address, double> &peers_upload_speeds,
-                      NodeInternetSpeeds &internetSpeeds, NodeStats *stats);
+                      NodeInternetSpeeds &internetSpeeds);
 
   GhostDagMinerHelper();
 

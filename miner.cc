@@ -101,14 +101,6 @@ void GhostDagMiner::StopApplication() {
   NS_LOG_WARN("Miner " << GetNode()->GetId() << " generated "
                        << m_minerGeneratedBlocks << " blocks");
 
-  GetMetricsCollector().RecordNodeStats(
-      GetNode()->GetId(), m_blockchain.blocks.size(), m_blockchain.tips.size(),
-      m_mempool.size(), m_minerGeneratedBlocks,
-      m_node_stats ? m_node_stats->blocks_received.load() : 0,
-      m_node_stats ? m_node_stats->blocks_orphaned.load() : 0,
-      m_node_stats ? m_node_stats->blocks_resolved.load() : 0, m_txsGenerated,
-      0, m_node_stats ? m_node_stats->total_fees_earned.load() : 0, 0, 0, 0, 0);
-
   GhostDagNode::StopApplication();
 }
 
@@ -148,33 +140,13 @@ void GhostDagMiner::MineBlock() {
 
   m_blockchain.AddBlock(newBlock);
 
-  uint32_t totalFees = newBlock.transactions.size() * 150;
-
   NS_LOG_INFO("Miner " << minerId << " mined block " << newBlock.header.block_id
                        << " with " << newBlock.transactions.size()
                        << " transactions, "
                        << newBlock.header.parent_hashes.size() << " parents");
 
-  GetMetricsCollector().RecordBlockCreated(
-      newBlock.header.block_id, minerId, currentTime,
-      static_cast<uint8_t>(newBlock.header.parent_hashes.size()),
-      newBlock.transactions.size(), totalFees);
-
   std::string blockHash = std::to_string(newBlock.header.block_id);
   BroadcastInvBlock(blockHash);
-
-  if (m_node_stats) {
-    m_node_stats->blocks_mined++;
-    m_node_stats->total_fees_earned += totalFees;
-  }
-
-  GetMetricsCollector().RecordNodeStats(
-      GetNode()->GetId(), m_blockchain.blocks.size(), m_blockchain.tips.size(),
-      m_mempool.size(), m_node_stats ? m_node_stats->blocks_mined.load() : 0,
-      m_node_stats ? m_node_stats->blocks_received.load() : 0,
-      m_node_stats ? m_node_stats->blocks_orphaned.load() : 0,
-      m_node_stats ? m_node_stats->blocks_resolved.load() : 0, m_txsGenerated,
-      0, m_node_stats ? m_node_stats->total_fees_earned.load() : 0, 0, 0, 0, 0);
 
   m_averageBlockGenInterval =
       (m_minerGeneratedBlocks /

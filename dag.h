@@ -111,9 +111,12 @@ struct Block {
   ns3::Ipv4Address received_from;
   int blue_score;
   bool is_blue;
+  std::set<int> blue_set;
   int selected_parent;
 
-  Block() : size_in_bytes(0), time_received(0), blue_score(0), is_blue(false) {}
+  Block()
+      : size_in_bytes(0), time_received(0), blue_score(0), is_blue(false),
+        selected_parent(-1) {}
 
   int GetTotalSize() const {
     int body_size = transactions.size() * 4;
@@ -122,31 +125,31 @@ struct Block {
 };
 
 struct Blockchain {
+  // ── Constructor ──────────────────────────────────────────────────────────
   Blockchain(int k = 0) : ghostdag_k(k), next_block_id(0) {
     Block genesis;
-    genesis.header.block_id =
-        0; // block_id = int(miner_id concat last_seem_block)
+    genesis.header.block_id = 0;
     genesis.header.miner_id = -1;
     genesis.header.time_created = 0.0;
     genesis.time_received = 0.0;
     genesis.size_in_bytes = 0;
     genesis.blue_score = 1;
     genesis.is_blue = true;
-
+    genesis.blue_set = {0};
     blocks[genesis.header.block_id] = genesis;
     tips.insert(genesis.header.block_id);
   }
-
   virtual ~Blockchain() {}
 
+  // ── Public state ─────────────────────────────────────────────────────────
   int ghostdag_k;
   int next_block_id;
-
   std::set<int> tips;
   std::map<int, std::set<int>> children;
   std::map<int, Block> blocks;
   std::map<int, Block> orphans;
 
+  // ── Public API (original signatures preserved) ───────────────────────────
   int GetDagWidth() const;
   bool HasBlock(int block_id) const;
   bool IsRed(int block_id) const;
@@ -158,14 +161,26 @@ struct Blockchain {
   void AddBlock(const Block &new_block);
 
   std::set<int> GetPast(int block_id);
-  std::set<int> GetFuture(int block_id);
+  std::set<int> GetFuture(int block_id) const;
   std::set<int> GetAnticone(int block_id, int other_block_id);
 
   std::set<int> CalculateBlueSet(int block_id);
   std::set<int> GreedyBlueSet(int block_id);
+  // tip-rooted variant used internally; exposed to match your original header
+  std::set<int> GreedyBlueSetFromTip(int tip_id, const std::set<int> &past_set);
+
   int CalculateBlueScore(int block_id, const std::set<int> &blue_set);
   bool IsKCluster(const std::set<int> &blue_set);
+  bool IsKClusterSubset(const std::set<int> &blue_set);
 
   int SelectTip();
   std::vector<int> ComputeGHOSTDAGOrdering();
+
+private:
+  // ── Past cache ────────────────────────────────────────────────────────────
+  std::map<int, std::set<int>> past_cache_;
+
+  // ── Internal helpers ─────────────────────────────────────────────────────
+  std::vector<int> TopologicalSort(const std::set<int> &subset);
+  void ProcessOrphans();
 };

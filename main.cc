@@ -91,10 +91,6 @@ int main(int argc, char *argv[]) {
   cmd.AddValue("txFeeLambda", "Transaction fee exponential lambda",
                txFeeLambda);
   cmd.AddValue("blocks", "Number of blocks to generate", targetNumberOfBlocks);
-  cmd.AddValue("metricsBackend", "Metrics backend: csv, prometheus",
-               metricsBackend);
-  cmd.AddValue("metricsOutput", "Output path for CSV metrics",
-               metricsOutputPath);
   cmd.AddValue("metricsPort", "Prometheus exporter port",
                metricsPrometheusPort);
   cmd.AddValue("metricsFlushInterval",
@@ -106,23 +102,6 @@ int main(int argc, char *argv[]) {
   if (noMiners > totalNoNodes) {
     std::cout << "Number of miners cannot exceed total nodes" << std::endl;
     return 0;
-  }
-
-  MetricBackend backend = MetricBackend::CSV;
-  if (metricsBackend == "prometheus") {
-    backend = MetricBackend::PROMETHEUS;
-  } else if (metricsBackend != "csv") {
-    std::cout << "Unknown metrics backend: " << metricsBackend << ", using csv"
-              << std::endl;
-  }
-
-  GetMetricsCollector().Initialize(backend, metricsOutputPath,
-                                   metricsPrometheusPort);
-  GetMetricsCollector().SetSimulationParams(totalNoNodes, noMiners, ghostdagK,
-                                            lambda);
-
-  if (metricsFlushInterval > 0) {
-    GetMetricsCollector().StartPeriodicFlush(metricsFlushInterval);
   }
 
   minersHash = new double[noMiners];
@@ -145,7 +124,6 @@ int main(int argc, char *argv[]) {
   }
 
   stop = targetNumberOfBlocks * lambda / 60.0;
-  auto stats = new NodeStats[totalNoNodes];
 
   GlobalValue::Bind("SimulatorImplementationType",
                     StringValue("ns3::DistributedSimulatorImpl"));
@@ -194,8 +172,7 @@ int main(int argc, char *argv[]) {
       GhostDagMinerHelper minerHelper(
           InetSocketAddress(Ipv4Address::GetAny(), ghostdagPort),
           nodesConnections[minerId], peersDownloadSpeeds[minerId],
-          peersUploadSpeeds[minerId], nodesInternetSpeeds[minerId],
-          &stats[minerId]);
+          peersUploadSpeeds[minerId], nodesInternetSpeeds[minerId]);
 
       minerHelper.SetAttribute("Kghostdag", UintegerValue(ghostdagK));
       minerHelper.SetAttribute("BlockGenInterval", DoubleValue(lambda));
@@ -221,7 +198,7 @@ int main(int argc, char *argv[]) {
         GhostDagNodeHelper nodeHelper(
             InetSocketAddress(Ipv4Address::GetAny(), ghostdagPort), node.second,
             peersDownloadSpeeds[node.first], peersUploadSpeeds[node.first],
-            nodesInternetSpeeds[node.first], &stats[node.first]);
+            nodesInternetSpeeds[node.first]);
 
         nodeHelper.SetAttribute("Kghostdag", UintegerValue(ghostdagK));
         nodeHelper.SetAttribute("MempoolSize", UintegerValue(mempoolSize));
@@ -249,12 +226,8 @@ int main(int argc, char *argv[]) {
   Simulator::Run();
   Simulator::Destroy();
 
-  GetMetricsCollector().StopPeriodicFlush();
-  GetMetricsCollector().Flush();
-
   MpiInterface::Disable();
 
-  delete[] stats;
   delete[] minersHash;
   delete[] minersRegions;
   delete[] minersStrategies;

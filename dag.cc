@@ -3,445 +3,425 @@
 
 #include <queue>
 
-void Blockchain::AddBlock(const Block &block) {
-  bool is_orphan = false;
-  for (int parent_id : block.header.parent_hashes) {
-    if (blocks.find(parent_id) == blocks.end()) {
-      is_orphan = true;
-      break;
+std::set<int> Blockchain::GetPast(int block_id) {
+  auto it = past_cache_.find(block_id);
+  if (it != past_cache_.end())
+    return it->second;
+
+  std::set<int> &past = past_cache_[block_id];
+  std::queue<int> q;
+
+  for (int p : blocks[block_id].header.parent_hashes)
+    if (!past.count(p)) {
+      past.insert(p);
+      q.push(p);
     }
-  }
 
-  if (is_orphan) {
-    orphans[block.header.block_id] = block;
-    ns3::GetMetricsCollector().RecordBlockOrphan(block.header.block_id);
-    return;
-  }
-
-  blocks[block.header.block_id] = block;
-
-  for (int parent_id : block.header.parent_hashes) {
-    children[parent_id].insert(block.header.block_id);
-  }
-
-  for (int parent_id : block.header.parent_hashes) {
-    tips.erase(parent_id);
-  }
-  tips.insert(block.header.block_id);
-
-  std::set<int> blue_set = CalculateBlueSet(block.header.block_id);
-  blocks[block.header.block_id].is_blue =
-      (blue_set.find(block.header.block_id) != blue_set.end());
-  blocks[block.header.block_id].blue_score =
-      CalculateBlueScore(block.header.block_id, blue_set);
-
-  ns3::GetMetricsCollector().RecordBlockBlue(
-      block.header.block_id, blocks[block.header.block_id].is_blue);
-
-  int max_blue_parent = -1;
-  int max_blue_score = -1;
-  for (int parent_id : block.header.parent_hashes) {
-    if (blocks[parent_id].blue_score > max_blue_score) {
-      max_blue_score = blocks[parent_id].blue_score;
-      max_blue_parent = parent_id;
-    }
-  }
-  blocks[block.header.block_id].selected_parent = max_blue_parent;
-
-  // Unorphan if needs
-  std::vector<int> to_unorphan;
-  for (auto &orphan_pair : orphans) {
-    bool can_add = true;
-    for (int parent_id : orphan_pair.second.header.parent_hashes) {
-      if (blocks.find(parent_id) == blocks.end()) {
-        can_add = false;
-        break;
+  while (!q.empty()) {
+    int cur = q.front();
+    q.pop();
+    auto bit = blocks.find(cur);
+    if (bit == blocks.end())
+      continue;
+    for (int p : bit->second.header.parent_hashes)
+      if (!past.count(p)) {
+        past.insert(p);
+        q.push(p);
       }
-    }
-    if (can_add) {
-      to_unorphan.push_back(orphan_pair.first);
-    }
   }
+  return past;
+}
 
-  for (int orphan_id : to_unorphan) {
-    Block orphan_block = orphans[orphan_id];
-    orphans.erase(orphan_id);
-    ns3::GetMetricsCollector().RecordBlockResolved(orphan_id);
-    AddBlock(orphan_block);
+std::set<int> Blockchain::GetFuture(int block_id) const {
+  std::set<int> future;
+  std::queue<int> q;
+  auto ci = children.find(block_id);
+  if (ci != children.end())
+    for (int c : ci->second) {
+      future.insert(c);
+      q.push(c);
+    }
+
+  while (!q.empty()) {
+    int cur = q.front();
+    q.pop();
+    auto ci2 = children.find(cur);
+    if (ci2 == children.end())
+      continue;
+    for (int c : ci2->second)
+      if (!future.count(c)) {
+        future.insert(c);
+        q.push(c);
+      }
   }
+  return future;
+}
+
+// Kahn over an arbitrary subset
+std::vector<int> Blockchain::TopologicalSort(const std::set<int> &subset) {
+  std::map<int, int> indeg;
+  for (int b : subset) {
+    indeg[b] = 0;
+    for (int p : blocks[b].header.parent_hashes)
+      if (subset.count(p))
+        ++indeg[b];
+  }
+  std::queue<int> q;
+  for (auto &[b, d] : indeg)
+    if (d == 0)
+      q.push(b);
+
+  std::vector<int> result;
+  result.reserve(subset.size());
+  while (!q.empty()) {
+    int cur = q.front();
+    q.pop();
+    result.push_back(cur);
+    auto ci = children.find(cur);
+    if (ci != children.end())
+      for (int ch : ci->second)
+        if (subset.count(ch) && --indeg[ch] == 0)
+          q.push(ch);
+  }
+  return result;
 }
 
 std::set<int> Blockchain::CalculateBlueSet(int block_id) {
   return GreedyBlueSet(block_id);
 }
 
+// GreedyBlueSet – GHOSTDAG algorithm
+//
+// Steps:
+//   1. Selected parent (sp) = parent with highest blue_score (lower id wins
+//   ties).
+//   2. Inherit sp.blue_set as the starting blue set.
+//   3. Merge set = past(block_id) \ ( past(sp) ∪ {sp} ).
+//   4. Process merge set in topological order.  For candidate C:
+//        anticone_blues = |{ b ∈ blue : neither b∈past(C) nor C∈past(b) }|
+//        If anticone_blues ≤ k  →  add C to blue.
+//   5. block_id is always blue (all blue blocks are in its past → anticone =
+//   0).
 std::set<int> Blockchain::GreedyBlueSet(int block_id) {
-  std::set<int> blue;
-  std::set<int> past = GetPast(block_id);
+  if (blocks[block_id].header.parent_hashes.empty())
+    return {block_id};
 
-  if (past.empty()) {
-    blue.insert(block_id);
-    return blue;
-  }
-
-  int max_blue_parent = -1;
-  int max_blue_score = -1;
-
-  for (int parent_id : blocks[block_id].header.parent_hashes) {
-    if (blocks[parent_id].blue_score > max_blue_score) {
-      max_blue_score = blocks[parent_id].blue_score;
-      max_blue_parent = parent_id;
+  // 1. Selected parent
+  int sp = -1;
+  int max_score = -1;
+  for (int p : blocks[block_id].header.parent_hashes) {
+    int s = blocks[p].blue_score;
+    if (s > max_score || (s == max_score && (sp == -1 || p < sp))) {
+      max_score = s;
+      sp = p;
     }
   }
 
-  if (max_blue_parent != -1) {
-    std::set<int> parent_past = GetPast(max_blue_parent);
-    for (int bid : parent_past) {
-      if (blocks[bid].is_blue) {
-        blue.insert(bid);
-      }
-    }
-    if (blocks[max_blue_parent].is_blue) {
-      blue.insert(max_blue_parent);
-    }
-  }
+  // 2. Inherit sp's blue set
+  std::set<int> blue = blocks[sp].blue_set;
+  std::set<int> past_sp = GetPast(sp);
+  std::set<int> past_block = GetPast(block_id);
 
-  for (int bid : past) {
-    if (blue.find(bid) == blue.end()) {
-      std::set<int> test_blue = blue;
-      test_blue.insert(bid);
+  // 3. Merge set
+  std::set<int> merge_set;
+  for (int b : past_block)
+    if (b != sp && !past_sp.count(b))
+      merge_set.insert(b);
 
-      int anticone_size = 0;
-      for (auto it1 = test_blue.begin(); it1 != test_blue.end(); ++it1) {
-        auto it2 = it1;
-        ++it2;
-        for (; it2 != test_blue.end(); ++it2) {
-          std::set<int> anticone = GetAnticone(*it1, *it2);
-          for (int ac : anticone) {
-            if (test_blue.find(ac) != test_blue.end()) {
-              anticone_size++;
-              if (anticone_size > ghostdag_k) {
-                break;
-              }
-            }
-          }
-          if (anticone_size > ghostdag_k) {
-            break;
-          }
-        }
-        if (anticone_size > ghostdag_k) {
+  // 4. Process merge set in topological order
+  for (int candidate : TopologicalSort(merge_set)) {
+    std::set<int> past_cand = GetPast(candidate);
+
+    int anticone_blues = 0;
+    for (int b : blue) {
+      bool b_is_anc = past_cand.count(b) > 0;
+      bool cand_is_anc = GetPast(b).count(candidate) > 0;
+      if (!b_is_anc && !cand_is_anc)
+        if (++anticone_blues > ghostdag_k)
           break;
-        }
-      }
-
-      if (anticone_size <= ghostdag_k) {
-        blue.insert(bid);
-      }
     }
+    if (anticone_blues <= ghostdag_k)
+      blue.insert(candidate);
   }
 
-  // Check if block_id itself can be added to blue set
-  int current_anticone_size = 0;
-  for (auto it1 = blue.begin(); it1 != blue.end(); ++it1) {
-    auto it2 = it1;
-    ++it2;
-    for (; it2 != blue.end(); ++it2) {
-      std::set<int> anticone = GetAnticone(*it1, *it2);
-      for (int ac : anticone) {
-        if (blue.find(ac) != blue.end() || ac == block_id) {
-          current_anticone_size++;
-          if (current_anticone_size > ghostdag_k) {
-            break;
-          }
-        }
-      }
-      if (current_anticone_size > ghostdag_k) {
-        break;
-      }
-    }
-    if (current_anticone_size > ghostdag_k) {
-      break;
-    }
-  }
-
-  // Also check anticone between block_id and blue blocks
-  for (int blue_block : blue) {
-    std::set<int> anticone = GetAnticone(block_id, blue_block);
-    for (int ac : anticone) {
-      if (blue.find(ac) != blue.end()) {
-        current_anticone_size++;
-        if (current_anticone_size > ghostdag_k) {
-          break;
-        }
-      }
-    }
-    if (current_anticone_size > ghostdag_k) {
-      break;
-    }
-  }
-
-  if (current_anticone_size <= ghostdag_k) {
-    blue.insert(block_id);
-  }
-
+  // 5. block_id is always blue
+  blue.insert(block_id);
   return blue;
 }
 
+// GreedyBlueSetFromTip
+//
+// Same as GreedyBlueSet but uses a caller-supplied past_set (avoids
+// recomputing it when the caller already has it).
+std::set<int> Blockchain::GreedyBlueSetFromTip(int tip_id,
+                                               const std::set<int> &past_set) {
+  if (past_set.empty())
+    return GreedyBlueSet(tip_id);
+  if (blocks[tip_id].header.parent_hashes.empty())
+    return {tip_id};
+
+  int sp = -1;
+  int max_score = -1;
+  for (int p : blocks[tip_id].header.parent_hashes) {
+    int s = blocks[p].blue_score;
+    if (s > max_score || (s == max_score && (sp == -1 || p < sp))) {
+      max_score = s;
+      sp = p;
+    }
+  }
+
+  std::set<int> blue = blocks[sp].blue_set;
+  std::set<int> past_sp = GetPast(sp);
+
+  std::set<int> merge_set;
+  for (int b : past_set)
+    if (b != sp && !past_sp.count(b))
+      merge_set.insert(b);
+
+  for (int candidate : TopologicalSort(merge_set)) {
+    std::set<int> past_cand = GetPast(candidate);
+    int anticone_blues = 0;
+    for (int b : blue) {
+      bool b_is_anc = past_cand.count(b) > 0;
+      bool cand_is_anc = GetPast(b).count(candidate) > 0;
+      if (!b_is_anc && !cand_is_anc)
+        if (++anticone_blues > ghostdag_k)
+          break;
+    }
+    if (anticone_blues <= ghostdag_k)
+      blue.insert(candidate);
+  }
+
+  blue.insert(tip_id);
+  return blue;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CalculateBlueScore
+// = |{ x ∈ past(block_id) : x ∈ blue_set }| + 1
+//
+// The +1 counts block_id itself, which is always in its own blue_set.
+// Matches the Kaspa convention: blue_score = total blue blocks up to and
+// including this block. Genesis constructor sets score=1 = 0 (empty past) + 1.
+// ─────────────────────────────────────────────────────────────────────────────
 int Blockchain::CalculateBlueScore(int block_id,
                                    const std::set<int> &blue_set) {
-  std::set<int> past = GetPast(block_id);
   int score = 0;
-
-  for (int bid : past) {
-    if (blue_set.find(bid) != blue_set.end()) {
-      score++;
-    }
-  }
-
-  if (blue_set.find(block_id) != blue_set.end()) {
-    score++;
-  }
-
-  return score;
+  for (int b : GetPast(block_id))
+    if (blue_set.count(b))
+      ++score;
+  return score + 1; // +1 for block_id itself (always in its own blue_set)
 }
 
-std::set<int> Blockchain::GetPast(int block_id) {
-  std::set<int> past;
-  std::queue<int> to_visit;
+// ─────────────────────────────────────────────────────────────────────────────
+// AddBlock
+// ─────────────────────────────────────────────────────────────────────────────
+void Blockchain::AddBlock(const Block &new_block) {
+  int block_id = new_block.header.block_id;
 
-  if (blocks.find(block_id) == blocks.end()) {
-    return past;
-  }
-
-  for (int parent_id : blocks[block_id].header.parent_hashes) {
-    to_visit.push(parent_id);
-  }
-
-  while (!to_visit.empty()) {
-    int current = to_visit.front();
-    to_visit.pop();
-
-    if (past.find(current) != past.end()) {
-      continue;
+  // Orphan check
+  for (int p : new_block.header.parent_hashes) {
+    if (!blocks.count(p)) {
+      orphans[block_id] = new_block;
+      return;
     }
+  }
 
-    past.insert(current);
+  // Insert
+  blocks[block_id] = new_block;
+  past_cache_.erase(block_id);
 
-    if (blocks.find(current) != blocks.end()) {
-      for (int parent_id : blocks[current].header.parent_hashes) {
-        if (past.find(parent_id) == past.end()) {
-          to_visit.push(parent_id);
+  for (int p : new_block.header.parent_hashes) {
+    children[p].insert(block_id);
+    tips.erase(p);
+  }
+  tips.insert(block_id);
+
+  // GHOSTDAG data
+  std::set<int> blue_set = GreedyBlueSet(block_id);
+  int blue_score = CalculateBlueScore(block_id, blue_set);
+
+  int sp = -1;
+  int max_sp = -1;
+  for (int p : new_block.header.parent_hashes) {
+    int s = blocks[p].blue_score;
+    if (s > max_sp || (s == max_sp && (sp == -1 || p < sp))) {
+      max_sp = s;
+      sp = p;
+    }
+  }
+
+  blocks[block_id].blue_set = blue_set;
+  blocks[block_id].blue_score = blue_score;
+  blocks[block_id].selected_parent = sp;
+
+  // is_blue = appears in selected tip's blue_set
+  int sel_tip = SelectTip();
+  bool is_blue =
+      (sel_tip == block_id) ||
+      (sel_tip != -1 && blocks[sel_tip].blue_set.count(block_id) > 0);
+  blocks[block_id].is_blue = is_blue;
+
+  // Re-evaluate is_blue for ALL accepted blocks.
+  // is_blue = "this block is in the current selected tip's blue_set".
+  // We must update every block – not just current tips – because when a merge
+  // block is added, previously non-tip blocks (now merged) need updating too.
+  sel_tip = SelectTip();
+  for (auto &[id, blk] : blocks)
+    blk.is_blue = (sel_tip != -1 && blocks[sel_tip].blue_set.count(id) > 0);
+
+  ProcessOrphans();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ProcessOrphans
+// ─────────────────────────────────────────────────────────────────────────────
+void Blockchain::ProcessOrphans() {
+  bool progress = true;
+  while (progress) {
+    progress = false;
+    std::vector<int> ready;
+    for (auto &[oid, oblk] : orphans) {
+      bool can_add = true;
+      for (int p : oblk.header.parent_hashes)
+        if (!blocks.count(p)) {
+          can_add = false;
+          break;
         }
-      }
+      if (can_add)
+        ready.push_back(oid);
+    }
+    for (int oid : ready) {
+      Block ob = orphans[oid];
+      orphans.erase(oid);
+      AddBlock(ob);
+      progress = true;
     }
   }
-
-  return past;
 }
 
-std::set<int> Blockchain::GetFuture(int block_id) {
-  std::set<int> future;
-  std::queue<int> to_visit;
-
-  if (children.find(block_id) != children.end()) {
-    for (int child_id : children[block_id]) {
-      to_visit.push(child_id);
-    }
-  }
-
-  while (!to_visit.empty()) {
-    int current = to_visit.front();
-    to_visit.pop();
-
-    if (future.find(current) != future.end()) {
-      continue;
-    }
-
-    future.insert(current);
-
-    if (children.find(current) != children.end()) {
-      for (int child_id : children[current]) {
-        if (future.find(child_id) == future.end()) {
-          to_visit.push(child_id);
-        }
-      }
-    }
-  }
-
-  return future;
-}
-
-std::set<int> Blockchain::GetAnticone(int block_id, int other_block_id) {
-  std::set<int> anticone;
-
-  std::set<int> past_1 = GetPast(block_id);
-  std::set<int> future_1 = GetFuture(block_id);
-
-  if (past_1.find(other_block_id) != past_1.end() ||
-      future_1.find(other_block_id) != future_1.end()) {
-    return anticone; // Empty set
-  }
-
-  std::set<int> past_2 = GetPast(other_block_id);
-  std::set<int> future_2 = GetFuture(other_block_id);
-
-  for (const auto &pair : blocks) {
-    int bid = pair.first;
-    if (bid == block_id || bid == other_block_id) {
-      continue;
-    }
-
-    bool in_past_or_future_1 = (past_1.find(bid) != past_1.end()) ||
-                               (future_1.find(bid) != future_1.end());
-    bool in_past_or_future_2 = (past_2.find(bid) != past_2.end()) ||
-                               (future_2.find(bid) != future_2.end());
-
-    if (!in_past_or_future_1 && !in_past_or_future_2) {
-      anticone.insert(bid);
-    }
-  }
-
-  return anticone;
-}
-
+// ─────────────────────────────────────────────────────────────────────────────
+// SelectTip
+// ─────────────────────────────────────────────────────────────────────────────
 int Blockchain::SelectTip() {
-  if (tips.empty()) {
+  if (tips.empty())
     return -1;
-  }
-
-  int max_blue_score = -1;
-  int selected_tip = -1;
-
-  for (int tip : tips) {
-    if (blocks[tip].blue_score > max_blue_score) {
-      max_blue_score = blocks[tip].blue_score;
-      selected_tip = tip;
-    } else if (blocks[tip].blue_score == max_blue_score && selected_tip != -1) {
-      // Use block_id as tie-breaker for determinism
-      if (tip < selected_tip) {
-        selected_tip = tip;
-      }
+  int best = -1;
+  int best_score = -1;
+  for (int t : tips) {
+    int s = blocks.at(t).blue_score;
+    if (s > best_score || (s == best_score && (best == -1 || t < best))) {
+      best_score = s;
+      best = t;
     }
   }
-
-  return selected_tip;
+  return best;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ComputeGHOSTDAGOrdering
+// Primary:   higher blue_score first
+// Secondary: earlier time_created first
+// Tertiary:  lower block_id first
+// ─────────────────────────────────────────────────────────────────────────────
 std::vector<int> Blockchain::ComputeGHOSTDAGOrdering() {
-  std::vector<int> ordering;
-
-  std::map<int, int> in_degree;
-  std::set<int> visited;
-
-  for (const auto &pair : blocks) {
-    in_degree[pair.first] = pair.second.header.parent_hashes.size();
+  std::map<int, int> indeg;
+  for (auto &[id, blk] : blocks) {
+    indeg[id] = 0;
+    for (int p : blk.header.parent_hashes)
+      if (blocks.count(p))
+        ++indeg[id];
   }
 
   auto cmp = [this](int a, int b) {
-    if (blocks[a].blue_score != blocks[b].blue_score) {
-      return blocks[a].blue_score < blocks[b].blue_score;
-    }
-    if (blocks[a].header.time_created != blocks[b].header.time_created) {
-      return blocks[a].header.time_created > blocks[b].header.time_created;
-    }
+    const Block &ba = blocks.at(a);
+    const Block &bb = blocks.at(b);
+    if (ba.blue_score != bb.blue_score)
+      return ba.blue_score < bb.blue_score;
+    if (ba.header.time_created != bb.header.time_created)
+      return ba.header.time_created > bb.header.time_created;
     return a > b;
   };
   std::priority_queue<int, std::vector<int>, decltype(cmp)> pq(cmp);
+  for (auto &[id, d] : indeg)
+    if (d == 0)
+      pq.push(id);
 
-  for (const auto &pair : in_degree) {
-    if (pair.second == 0) {
-      pq.push(pair.first);
-    }
-  }
-
+  std::vector<int> ordering;
+  ordering.reserve(blocks.size());
   while (!pq.empty()) {
-    int current = pq.top();
+    int cur = pq.top();
     pq.pop();
-
-    ordering.push_back(current);
-    visited.insert(current);
-
-    if (children.find(current) != children.end()) {
-      for (int child : children[current]) {
-        in_degree[child]--;
-        if (in_degree[child] == 0 && visited.find(child) == visited.end()) {
-          pq.push(child);
-        }
-      }
-    }
+    ordering.push_back(cur);
+    auto ci = children.find(cur);
+    if (ci != children.end())
+      for (int ch : ci->second)
+        if (--indeg[ch] == 0)
+          pq.push(ch);
   }
-
   return ordering;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IsKCluster
+// ─────────────────────────────────────────────────────────────────────────────
 bool Blockchain::IsKCluster(const std::set<int> &blue_set) {
-  for (int b1 : blue_set) {
-    std::set<int> anticone_b1;
-    std::set<int> past_b1 = GetPast(b1);
-    std::set<int> future_b1 = GetFuture(b1);
-
-    for (const auto &pair : blocks) {
-      int bid = pair.first;
-      if (bid == b1 || blue_set.find(bid) == blue_set.end()) {
+  for (int b : blue_set) {
+    std::set<int> past_b = GetPast(b);
+    std::set<int> fut_b = GetFuture(b);
+    int ac = 0;
+    for (int x : blue_set) {
+      if (x == b)
         continue;
-      }
-      std::set<int> past_bid = GetPast(bid);
-      std::set<int> future_bid = GetFuture(bid);
-      bool in_past_or_future_1 = (past_b1.find(bid) != past_b1.end()) ||
-                                 (future_b1.find(bid) != future_b1.end());
-      bool in_past_or_future_2 = (past_bid.find(b1) != past_bid.end()) ||
-                                 (future_bid.find(b1) != future_bid.end());
-      if (!in_past_or_future_1 && !in_past_or_future_2) {
-        anticone_b1.insert(bid);
-      }
-    }
-
-    if ((int)anticone_b1.size() > ghostdag_k) {
-      return false;
+      if (!past_b.count(x) && !fut_b.count(x))
+        if (++ac > ghostdag_k)
+          return false;
     }
   }
   return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IsKClusterSubset  –  same but filters to only existing blocks first
+// ─────────────────────────────────────────────────────────────────────────────
+bool Blockchain::IsKClusterSubset(const std::set<int> &blue_set) {
+  std::set<int> existing;
+  for (int b : blue_set)
+    if (blocks.count(b))
+      existing.insert(b);
+  return IsKCluster(existing);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Simple queries
+// ─────────────────────────────────────────────────────────────────────────────
 int Blockchain::GetDagWidth() const { return static_cast<int>(tips.size()); }
-
-bool Blockchain::HasBlock(int block_id) const {
-  return blocks.find(block_id) != blocks.end();
+bool Blockchain::HasBlock(int id) const { return blocks.count(id) > 0; }
+bool Blockchain::IsRed(int id) const {
+  auto it = blocks.find(id);
+  return it != blocks.end() && !it->second.is_blue;
 }
-
-bool Blockchain::IsRed(int block_id) const {
-  auto it = blocks.find(block_id);
-  if (it != blocks.end()) {
-    return !it->second.is_blue;
-  }
-  return false;
-}
-
-bool Blockchain::IsOrphan(int block_id) const {
-  return orphans.find(block_id) != orphans.end();
-}
+bool Blockchain::IsOrphan(int id) const { return orphans.count(id) > 0; }
 
 std::vector<const Block *> Blockchain::GetChildrenPointers(const Block &block) {
-  std::vector<const Block *> children_pointers;
-  auto it = children.find(block.header.block_id);
-  if (it != children.end()) {
-    for (int child_id : it->second) {
-      auto block_it = blocks.find(child_id);
-      if (block_it != blocks.end()) {
-        children_pointers.push_back(&(block_it->second));
-      }
-    }
+  std::vector<const Block *> out;
+  auto ci = children.find(block.header.block_id);
+  if (ci == children.end())
+    return out;
+  for (int ch : ci->second) {
+    auto bit = blocks.find(ch);
+    if (bit != blocks.end())
+      out.push_back(&bit->second);
   }
-  return children_pointers;
+  return out;
 }
 
 std::vector<const Block *> Blockchain::GetParentsPointers(const Block &block) {
-  std::vector<const Block *> parent_pointers;
-  for (int parent_id : block.header.parent_hashes) {
-    auto block_it = blocks.find(parent_id);
-    if (block_it != blocks.end()) {
-      parent_pointers.push_back(&(block_it->second));
-    }
+  std::vector<const Block *> out;
+  for (int p : block.header.parent_hashes) {
+    auto bit = blocks.find(p);
+    if (bit != blocks.end())
+      out.push_back(&bit->second);
   }
-  return parent_pointers;
+  return out;
 }
