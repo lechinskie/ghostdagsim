@@ -41,7 +41,8 @@ int main(int argc, char *argv[]) {
   uint8_t ghostdagK = 10;
 
   double lambda = 20.0;
-  double tau = 5.0;
+  double tau = 1.0;
+  double pareto_shape_divider = 5.0;
   int txsPerBlock = 100;
   int mempoolSize = 10000;
   double txFeeLambda = 150.0;
@@ -77,21 +78,24 @@ int main(int argc, char *argv[]) {
   CommandLine cmd;
   cmd.AddValue("nodes", "Total number of nodes", totalNoNodes);
   cmd.AddValue("miners", "Number of miners", noMiners);
-  cmd.AddValue("minConnections", "Minimum connections per node",
+  cmd.AddValue("min_conn", "Minimum connections per node",
                minConnectionsPerNode);
-  cmd.AddValue("maxConnections", "Maximum connections per node",
+  cmd.AddValue("max_conn", "Maximum connections per node",
                maxConnectionsPerNode);
   cmd.AddValue("lambda", "Block creation rate (seconds)", lambda);
-  cmd.AddValue("tau", "Propagation delay (seconds)", tau);
+  cmd.AddValue("tau", "Propagation delay multiplier", tau);
+  cmd.AddValue("pareto_divider",
+               "Propagation latency pareto distribution divider",
+               pareto_shape_divider);
   cmd.AddValue("k", "GHOSTDAG k parameter", ghostdagK);
-  cmd.AddValue("txsPerBlock", "Transactions per block", txsPerBlock);
-  cmd.AddValue("mempoolSize", "Mempool size", mempoolSize);
-  cmd.AddValue("txFeeLambda", "Transaction fee exponential lambda",
+  cmd.AddValue("txs_per_block", "Transactions per block", txsPerBlock);
+  cmd.AddValue("mempool_size", "Mempool size", mempoolSize);
+  cmd.AddValue("tx_fee_lambda", "Transaction fee exponential lambda",
                txFeeLambda);
   cmd.AddValue("blocks", "Number of blocks to generate", targetNumberOfBlocks);
-  cmd.AddValue("metricsPort", "Prometheus exporter port",
+  cmd.AddValue("metrics_port", "Prometheus exporter port",
                metricsPrometheusPort);
-  cmd.AddValue("metricsFlushInterval",
+  cmd.AddValue("metrics_flush_interval",
                "Periodic flush interval in seconds (0 to disable)",
                metricsFlushInterval);
 
@@ -121,7 +125,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  stop = targetNumberOfBlocks * lambda / 60.0;
+  stop = (targetNumberOfBlocks * lambda / 60.0) / noMiners;
 
   GlobalValue::Bind("SimulatorImplementationType",
                     StringValue("ns3::DistributedSimulatorImpl"));
@@ -144,9 +148,9 @@ int main(int argc, char *argv[]) {
     std::cout << "Simulation Duration: " << stop << " minutes\n\n";
   }
 
-  GhostDagTopologyHelper topologyHelper(systemCount, totalNoNodes, noMiners,
-                                        minersRegions, minConnectionsPerNode,
-                                        maxConnectionsPerNode, tau, systemId);
+  GhostDagTopologyHelper topologyHelper(
+      systemCount, totalNoNodes, noMiners, minersRegions, minConnectionsPerNode,
+      maxConnectionsPerNode, pareto_shape_divider, tau, systemId);
 
   InternetStackHelper stack;
   topologyHelper.InstallStack(stack);
