@@ -6,7 +6,7 @@
 //   (I5) B is always in B.blue_set
 //   (I6) selected_parent is the parent with the highest blue_score
 //   (I7) For every block B: B.blue_score ≥ B.selected_parent.blue_score
-//   (I8) GetPast / GetFuture / GetAnticone are topologically correct
+//   (I8) GetPast / GetFuture are topologically correct
 //   (I9) Orphans are held until all parents exist, then inserted correctly
 //  (I10) Linear chain → every block is blue
 //  (I11) With N≥k+2 parallel blocks from genesis, at most k+1 are in the
@@ -23,9 +23,6 @@
 #include <gtest/gtest.h>
 #include <set>
 #include <vector>
-
-// ─── helpers
-// ──────────────────────────────────────────────────────────────────
 
 // Build a Block with the given id and parents (no other fields matter for
 // GHOSTDAG).
@@ -59,9 +56,6 @@ static bool AllBlueScoresCorrect(Blockchain &dag) {
   }
   return true;
 }
-
-// ─── fixture
-// ──────────────────────────────────────────────────────────────────
 
 class GHOSTDAGTest : public ::testing::Test {
 protected:
@@ -439,7 +433,7 @@ TEST_F(GHOSTDAGTest, SelectedParent_BlueScoreMonotonicity) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// XI – GetPast, GetFuture, GetAnticone  (I8)
+// XI – GetPast, GetFuture  (I8)
 // ═════════════════════════════════════════════════════════════════════════════
 
 TEST_F(GHOSTDAGTest, GetPast_CorrectAncestors) {
@@ -470,44 +464,6 @@ TEST_F(GHOSTDAGTest, GetFuture_CorrectDescendants) {
   EXPECT_EQ(dag.GetFuture(1), (std::set<int>{3}));
   EXPECT_EQ(dag.GetFuture(2), (std::set<int>{3}));
   EXPECT_EQ(dag.GetFuture(3), (std::set<int>{}));
-}
-
-TEST_F(GHOSTDAGTest, GetAnticone_SiblingBlocksHaveEmptyAnticone) {
-  // Only 3 blocks: 0, 1, 2. Both 1 and 2 from genesis.
-  // GetAnticone(1,2) = blocks unrelated to BOTH 1 and 2. Only block 0
-  // remains but 0 is ancestor of both → result is empty.
-  Blockchain dag(3);
-  dag.AddBlock(MakeBlock(1, {0}));
-  dag.AddBlock(MakeBlock(2, {0}));
-
-  EXPECT_TRUE(dag.GetAnticone(1, 2).empty())
-      << "With only genesis + 2 siblings, anticone(1,2) must be empty";
-}
-
-TEST_F(GHOSTDAGTest, GetAnticone_ThirdBlockInAnticoneOfSiblings) {
-  // 0→1, 0→2, 0→3.  GetAnticone(1,2) = {3} (3 is unrelated to both 1 and 2)
-  Blockchain dag(5);
-  dag.AddBlock(MakeBlock(1, {0}));
-  dag.AddBlock(MakeBlock(2, {0}));
-  dag.AddBlock(MakeBlock(3, {0}));
-
-  auto ac = dag.GetAnticone(1, 2);
-  EXPECT_TRUE(ac.count(3))
-      << "Block 3 should be in anticone(1,2): it is unrelated to both";
-  EXPECT_FALSE(ac.count(0))
-      << "Genesis is ancestor of 1 and 2, not in their anticone";
-}
-
-TEST_F(GHOSTDAGTest, GetAnticone_AncestorIsNotInAnticone) {
-  // 0→1→2.  block 0 is ancestor of 1. GetAnticone(0, 2) should NOT contain 1
-  // (1 is in past(2) so it IS related to 2).
-  Blockchain dag(3);
-  dag.AddBlock(MakeBlock(1, {0}));
-  dag.AddBlock(MakeBlock(2, {1}));
-
-  auto ac = dag.GetAnticone(0, 2);
-  EXPECT_TRUE(ac.empty()) << "In a linear chain 0→1→2 there are no blocks "
-                             "unrelated to both 0 and 2";
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

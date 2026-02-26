@@ -47,10 +47,8 @@ int main(int argc, char *argv[]) {
   double txFeeLambda = 150.0;
   int targetNumberOfBlocks = 10000;
 
-  std::string metricsBackend = "csv";
-  std::string metricsOutputPath = "./metrics";
-  uint16_t metricsPrometheusPort = 9090;
-  double metricsFlushInterval = 60.0;
+  uint16_t metricsPrometheusPort = 9091;
+  double metricsFlushInterval = 2;
 
   double *minersHash;
   enum Region *minersRegions;

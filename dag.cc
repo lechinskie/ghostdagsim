@@ -196,14 +196,12 @@ std::set<int> Blockchain::GreedyBlueSetFromTip(int tip_id,
   return blue;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CalculateBlueScore
 // = |{ x ∈ past(block_id) : x ∈ blue_set }| + 1
 //
 // The +1 counts block_id itself, which is always in its own blue_set.
 // Matches the Kaspa convention: blue_score = total blue blocks up to and
 // including this block. Genesis constructor sets score=1 = 0 (empty past) + 1.
-// ─────────────────────────────────────────────────────────────────────────────
 int Blockchain::CalculateBlueScore(int block_id,
                                    const std::set<int> &blue_set) {
   int score = 0;
@@ -213,9 +211,6 @@ int Blockchain::CalculateBlueScore(int block_id,
   return score + 1; // +1 for block_id itself (always in its own blue_set)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AddBlock
-// ─────────────────────────────────────────────────────────────────────────────
 void Blockchain::AddBlock(const Block &new_block) {
   int block_id = new_block.header.block_id;
 
@@ -273,9 +268,6 @@ void Blockchain::AddBlock(const Block &new_block) {
   ProcessOrphans();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ProcessOrphans
-// ─────────────────────────────────────────────────────────────────────────────
 void Blockchain::ProcessOrphans() {
   bool progress = true;
   while (progress) {
@@ -300,9 +292,6 @@ void Blockchain::ProcessOrphans() {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SelectTip
-// ─────────────────────────────────────────────────────────────────────────────
 int Blockchain::SelectTip() {
   if (tips.empty())
     return -1;
@@ -318,12 +307,10 @@ int Blockchain::SelectTip() {
   return best;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // ComputeGHOSTDAGOrdering
 // Primary:   higher blue_score first
 // Secondary: earlier time_created first
 // Tertiary:  lower block_id first
-// ─────────────────────────────────────────────────────────────────────────────
 std::vector<int> Blockchain::ComputeGHOSTDAGOrdering() {
   std::map<int, int> indeg;
   for (auto &[id, blk] : blocks) {
@@ -362,9 +349,6 @@ std::vector<int> Blockchain::ComputeGHOSTDAGOrdering() {
   return ordering;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// IsKCluster
-// ─────────────────────────────────────────────────────────────────────────────
 bool Blockchain::IsKCluster(const std::set<int> &blue_set) {
   for (int b : blue_set) {
     std::set<int> past_b = GetPast(b);
@@ -381,9 +365,6 @@ bool Blockchain::IsKCluster(const std::set<int> &blue_set) {
   return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// IsKClusterSubset  –  same but filters to only existing blocks first
-// ─────────────────────────────────────────────────────────────────────────────
 bool Blockchain::IsKClusterSubset(const std::set<int> &blue_set) {
   std::set<int> existing;
   for (int b : blue_set)
@@ -392,9 +373,6 @@ bool Blockchain::IsKClusterSubset(const std::set<int> &blue_set) {
   return IsKCluster(existing);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Simple queries
-// ─────────────────────────────────────────────────────────────────────────────
 int Blockchain::GetDagWidth() const { return static_cast<int>(tips.size()); }
 bool Blockchain::HasBlock(int id) const { return blocks.count(id) > 0; }
 bool Blockchain::IsRed(int id) const {
