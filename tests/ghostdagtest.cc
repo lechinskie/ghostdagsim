@@ -20,13 +20,14 @@
 #include "../dag.h"
 #include "../metrics.h"
 
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <set>
 #include <vector>
 
 // Build a Block with the given id and parents (no other fields matter for
 // GHOSTDAG).
-static Block MakeBlock(int id, std::vector<int> parents = {}) {
+static Block MakeBlock(uint64_t id, std::vector<uint64_t> parents = {}) {
   Block b;
   b.header.block_id = id;
   b.header.parent_hashes = std::move(parents);
@@ -46,8 +47,8 @@ static bool AllBlueSetsAreKClusters(Blockchain &dag) {
 // Genesis: past={}, score = 0 + 1 = 1  (matches constructor special-case)
 static bool AllBlueScoresCorrect(Blockchain &dag) {
   for (auto &[id, blk] : dag.blocks) {
-    std::set<int> past = dag.GetPast(id);
-    int expected = 1; // +1 for block itself (always in its own blue_set)
+    std::set<uint64_t> past = dag.GetPast(id);
+    uint64_t expected = 1; // +1 for block itself (always in its own blue_set)
     for (int p : past)
       if (blk.blue_set.count(p))
         ++expected;
@@ -74,13 +75,13 @@ TEST_F(GHOSTDAGTest, Genesis_Invariants) {
   // is_blue = true
   EXPECT_TRUE(dag.blocks[0].is_blue);
   // blue_set = {0}
-  EXPECT_EQ(dag.blocks[0].blue_set, (std::set<int>{0}));
+  EXPECT_EQ(dag.blocks[0].blue_set, (std::set<uint64_t>{0}));
   // genesis has no parents
   EXPECT_TRUE(dag.blocks[0].header.parent_hashes.empty());
   // genesis is the only tip initially
-  EXPECT_EQ(dag.tips, (std::set<int>{0}));
+  EXPECT_EQ(dag.tips, (std::set<uint64_t>{0}));
   // SelectTip = 0
-  EXPECT_EQ(dag.SelectTip(), 0);
+  EXPECT_EQ(dag.SelectTip().value(), 0);
 }
 
 TEST_F(GHOSTDAGTest, Genesis_RemainsBlueAfterManyBlocksAdded) {
@@ -89,7 +90,7 @@ TEST_F(GHOSTDAGTest, Genesis_RemainsBlueAfterManyBlocksAdded) {
     dag.AddBlock(MakeBlock(i, {0}));
 
   // genesis must stay in the tip's blue_set forever
-  int tip = dag.SelectTip();
+  uint64_t tip = dag.SelectTip().value();
   EXPECT_TRUE(dag.blocks[tip].blue_set.count(0))
       << "Genesis must always be in the selected tip's blue_set";
 }
@@ -101,11 +102,11 @@ TEST_F(GHOSTDAGTest, Genesis_RemainsBlueAfterManyBlocksAdded) {
 TEST_F(GHOSTDAGTest, LinearChain_AllBlocksBlue) {
   // 0 → 1 → 2 → 3 → 4 → 5  (k=0 or any k)
   Blockchain dag(0);
-  for (int i = 1; i <= 5; i++)
+  for (uint64_t i = 1; i <= 5; i++)
     dag.AddBlock(MakeBlock(i, {i - 1}));
 
   // Every block should be in the selected tip's blue_set (no anticone at all)
-  int tip = dag.SelectTip();
+  uint64_t tip = dag.SelectTip().value();
   EXPECT_EQ(tip, 5);
   for (int i = 0; i <= 5; i++)
     EXPECT_TRUE(dag.blocks[tip].blue_set.count(i))
@@ -114,21 +115,21 @@ TEST_F(GHOSTDAGTest, LinearChain_AllBlocksBlue) {
 
 TEST_F(GHOSTDAGTest, LinearChain_BlueScoresAreMonotonicallyIncreasing) {
   Blockchain dag(2);
-  for (int i = 1; i <= 6; i++)
+  for (uint64_t i = 1; i <= 6; i++)
     dag.AddBlock(MakeBlock(i, {i - 1}));
 
   // blue_score must strictly increase along the chain
-  for (int i = 1; i <= 6; i++)
+  for (uint64_t i = 1; i <= 6; i++)
     EXPECT_GT(dag.blocks[i].blue_score, dag.blocks[i - 1].blue_score)
         << "blue_score should strictly increase along a linear chain";
 }
 
 TEST_F(GHOSTDAGTest, LinearChain_SelectedParentIsDirectParent) {
   Blockchain dag(2);
-  for (int i = 1; i <= 5; i++)
+  for (uint64_t i = 1; i <= 5; i++)
     dag.AddBlock(MakeBlock(i, {i - 1}));
 
-  for (int i = 1; i <= 5; i++)
+  for (uint64_t i = 1; i <= 5; i++)
     EXPECT_EQ(dag.blocks[i].selected_parent, i - 1)
         << "selected_parent should be the direct parent in a chain";
 }
@@ -146,7 +147,7 @@ TEST_F(GHOSTDAGTest, ParallelBlocks_K0_OnlyOneBlue) {
   dag.AddBlock(MakeBlock(2, {0}));
 
   // Both have blue_score=1; lower id wins → tip=1
-  EXPECT_EQ(dag.SelectTip(), 1);
+  EXPECT_EQ(dag.SelectTip().value(), 1);
   EXPECT_TRUE(dag.blocks[1].is_blue);
   EXPECT_FALSE(dag.blocks[2].is_blue)
       << "With k=0, second parallel block must be red";
@@ -195,21 +196,21 @@ TEST_F(GHOSTDAGTest, ParallelBlocks_K0_MergeBlockOnlyInheritsOneChain) {
 // blue_set
 //
 TEST_F(GHOSTDAGTest, ManyParallelBlocks_AtMostKPlus1BlueFromMerge) {
-  const int K = 3;
-  const int N = 20;
+  const uint64_t K = 3;
+  const uint64_t N = 20;
   Blockchain dag(K);
 
   for (int i = 1; i <= N; i++)
     dag.AddBlock(MakeBlock(i, {0}));
 
   // Add a merge block that references all N parallel blocks
-  std::vector<int> all_parents;
+  std::vector<uint64_t> all_parents;
   for (int i = 1; i <= N; i++)
     all_parents.push_back(i);
   dag.AddBlock(MakeBlock(N + 1, all_parents));
 
-  int merge_tip = N + 1;
-  int blue_in_merge = 0;
+  uint64_t merge_tip = N + 1;
+  uint64_t blue_in_merge = 0;
   for (int i = 1; i <= N; i++)
     if (dag.blocks[merge_tip].blue_set.count(i))
       ++blue_in_merge;
@@ -244,7 +245,7 @@ TEST_F(GHOSTDAGTest, CompetingChains_LongerChainWins) {
   dag.AddBlock(MakeBlock(5, {0}));
   dag.AddBlock(MakeBlock(6, {5}));
 
-  EXPECT_EQ(dag.SelectTip(), 4) << "Longer chain A should win";
+  EXPECT_EQ(dag.SelectTip().value(), 4) << "Longer chain A should win";
 
   // Chain A blocks are all blue from tip 4's perspective
   for (int i = 0; i <= 4; i++)
@@ -269,7 +270,7 @@ TEST_F(GHOSTDAGTest, CompetingChains_EqualLength_LowerIdWins) {
   dag.AddBlock(MakeBlock(4, {3}));
 
   // Both tips have blue_score=2; lower id = 2 wins
-  EXPECT_EQ(dag.SelectTip(), 2);
+  EXPECT_EQ(dag.SelectTip().value(), 2);
   EXPECT_TRUE(dag.blocks[2].is_blue);
   EXPECT_FALSE(dag.blocks[4].is_blue);
 }
@@ -284,11 +285,11 @@ TEST_F(GHOSTDAGTest, BlueSet_ImmutableAfterInsertion) {
   dag.AddBlock(MakeBlock(1, {0}));
   dag.AddBlock(MakeBlock(2, {0}));
 
-  std::set<int> blue_set_1_snapshot = dag.blocks[1].blue_set;
-  std::set<int> blue_set_2_snapshot = dag.blocks[2].blue_set;
+  std::set<uint64_t> blue_set_1_snapshot = dag.blocks[1].blue_set;
+  std::set<uint64_t> blue_set_2_snapshot = dag.blocks[2].blue_set;
 
   // Add many more blocks; blue_set of 1 and 2 must not change
-  for (int i = 3; i <= 15; i++)
+  for (uint64_t i = 3; i <= 15; i++)
     dag.AddBlock(MakeBlock(i, {i - 1}));
 
   EXPECT_EQ(dag.blocks[1].blue_set, blue_set_1_snapshot)
@@ -303,11 +304,11 @@ TEST_F(GHOSTDAGTest, BlueScore_ImmutableAfterInsertion) {
   dag.AddBlock(MakeBlock(2, {1}));
   dag.AddBlock(MakeBlock(3, {2}));
 
-  int score1 = dag.blocks[1].blue_score;
-  int score2 = dag.blocks[2].blue_score;
-  int score3 = dag.blocks[3].blue_score;
+  uint64_t score1 = dag.blocks[1].blue_score;
+  uint64_t score2 = dag.blocks[2].blue_score;
+  uint64_t score3 = dag.blocks[3].blue_score;
 
-  for (int i = 4; i <= 20; i++)
+  for (uint64_t i = 4; i <= 20; i++)
     dag.AddBlock(MakeBlock(i, {i - 1}));
 
   EXPECT_EQ(dag.blocks[1].blue_score, score1);
@@ -334,7 +335,7 @@ TEST_F(GHOSTDAGTest, IsBlue_CanChangeAsDAGGrows) {
   dag.AddBlock(MakeBlock(4, {3}));
 
   // Now tip = 4; chain B dominates
-  EXPECT_EQ(dag.SelectTip(), 4);
+  EXPECT_EQ(dag.SelectTip().value(), 4);
   EXPECT_TRUE(dag.blocks[4].is_blue);
   // Block 1 is now red (not in chain B's blue_set under k=0)
   EXPECT_FALSE(dag.blocks[1].is_blue)
@@ -445,11 +446,11 @@ TEST_F(GHOSTDAGTest, GetPast_CorrectAncestors) {
   dag.AddBlock(MakeBlock(3, {2}));
   dag.AddBlock(MakeBlock(4, {1}));
 
-  EXPECT_EQ(dag.GetPast(0), (std::set<int>{}));
-  EXPECT_EQ(dag.GetPast(1), (std::set<int>{0}));
-  EXPECT_EQ(dag.GetPast(2), (std::set<int>{0, 1}));
-  EXPECT_EQ(dag.GetPast(3), (std::set<int>{0, 1, 2}));
-  EXPECT_EQ(dag.GetPast(4), (std::set<int>{0, 1}));
+  EXPECT_EQ(dag.GetPast(0), (std::set<uint64_t>{}));
+  EXPECT_EQ(dag.GetPast(1), (std::set<uint64_t>{0}));
+  EXPECT_EQ(dag.GetPast(2), (std::set<uint64_t>{0, 1}));
+  EXPECT_EQ(dag.GetPast(3), (std::set<uint64_t>{0, 1, 2}));
+  EXPECT_EQ(dag.GetPast(4), (std::set<uint64_t>{0, 1}));
 }
 
 TEST_F(GHOSTDAGTest, GetFuture_CorrectDescendants) {
@@ -460,10 +461,10 @@ TEST_F(GHOSTDAGTest, GetFuture_CorrectDescendants) {
   dag.AddBlock(MakeBlock(2, {0}));
   dag.AddBlock(MakeBlock(3, {1, 2}));
 
-  EXPECT_EQ(dag.GetFuture(0), (std::set<int>{1, 2, 3}));
-  EXPECT_EQ(dag.GetFuture(1), (std::set<int>{3}));
-  EXPECT_EQ(dag.GetFuture(2), (std::set<int>{3}));
-  EXPECT_EQ(dag.GetFuture(3), (std::set<int>{}));
+  EXPECT_EQ(dag.GetFuture(0), (std::set<uint64_t>{1, 2, 3}));
+  EXPECT_EQ(dag.GetFuture(1), (std::set<uint64_t>{3}));
+  EXPECT_EQ(dag.GetFuture(2), (std::set<uint64_t>{3}));
+  EXPECT_EQ(dag.GetFuture(3), (std::set<uint64_t>{}));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -526,7 +527,7 @@ TEST_F(GHOSTDAGTest, Orphan_DataIsCorrectAfterUnorphaning) {
 
 TEST_F(GHOSTDAGTest, SelectTip_OnlyGenesis) {
   Blockchain dag(3);
-  EXPECT_EQ(dag.SelectTip(), 0);
+  EXPECT_EQ(dag.SelectTip().value(), 0);
 }
 
 TEST_F(GHOSTDAGTest, SelectTip_PrefersHigherBlueScore) {
@@ -537,7 +538,7 @@ TEST_F(GHOSTDAGTest, SelectTip_PrefersHigherBlueScore) {
   // Single block: tip at 3 (score=1)
   dag.AddBlock(MakeBlock(3, {0}));
 
-  EXPECT_EQ(dag.SelectTip(), 2)
+  EXPECT_EQ(dag.SelectTip().value(), 2)
       << "Tip with higher blue_score (2) should win over tip with score (1)";
 }
 
@@ -547,7 +548,7 @@ TEST_F(GHOSTDAGTest, SelectTip_LowerIdBreaksTie) {
   dag.AddBlock(MakeBlock(2, {0})); // score=1, higher id
 
   // Both have equal blue_score; lower id (1) wins
-  EXPECT_EQ(dag.SelectTip(), 1);
+  EXPECT_EQ(dag.SelectTip().value(), 1);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -562,15 +563,15 @@ TEST_F(GHOSTDAGTest, GHOSTDAGOrdering_IsTopologicallyValid) {
   dag.AddBlock(MakeBlock(4, {2}));
   dag.AddBlock(MakeBlock(5, {3, 4}));
 
-  std::vector<int> order = dag.ComputeGHOSTDAGOrdering();
+  std::vector<uint64_t> order = dag.ComputeGHOSTDAGOrdering();
 
   // Every block must appear exactly once
   EXPECT_EQ(order.size(), dag.blocks.size());
-  std::set<int> seen(order.begin(), order.end());
+  std::set<uint64_t> seen(order.begin(), order.end());
   EXPECT_EQ(seen.size(), dag.blocks.size());
 
   // For each block, all its parents must appear before it
-  std::map<int, int> position;
+  std::map<uint64_t, uint64_t> position;
   for (int i = 0; i < (int)order.size(); i++)
     position[order[i]] = i;
 
@@ -591,7 +592,7 @@ TEST_F(GHOSTDAGTest, GHOSTDAGOrdering_BlueBlocksBeforeRedAtSameLevel) {
   dag.AddBlock(MakeBlock(4, {3}));
 
   auto order = dag.ComputeGHOSTDAGOrdering();
-  std::map<int, int> pos;
+  std::map<uint64_t, uint64_t> pos;
   for (int i = 0; i < (int)order.size(); i++)
     pos[order[i]] = i;
 
@@ -608,7 +609,7 @@ TEST_F(GHOSTDAGTest, GHOSTDAGOrdering_BlueBlocksBeforeRedAtSameLevel) {
 
 TEST_F(GHOSTDAGTest, IsKCluster_LinearChainIsAlwaysKCluster) {
   Blockchain dag(0); // even k=0
-  for (int i = 1; i <= 5; i++)
+  for (uint64_t i = 1; i <= 5; i++)
     dag.AddBlock(MakeBlock(i, {i - 1}));
 
   // In a linear chain there are no anticone relations → trivially a k-cluster
@@ -625,7 +626,7 @@ TEST_F(GHOSTDAGTest, IsKCluster_TooManyAnticoneFails) {
   dag.AddBlock(MakeBlock(3, {0}));
 
   // {1, 2, 3} are pairwise in anticone; each has anticone size 2 > k=1
-  std::set<int> bad_set = {1, 2, 3};
+  std::set<uint64_t> bad_set = {1, 2, 3};
   EXPECT_FALSE(dag.IsKCluster(bad_set))
       << "Three mutually unrelated blocks should NOT form a k=1 cluster";
 }
@@ -677,7 +678,7 @@ TEST_F(GHOSTDAGTest, GlobalInvariants_ComplexDAG) {
   }
 
   // I3: is_blue consistency – block i is blue iff it's in SelectTip().blue_set
-  int tip = dag.SelectTip();
+  uint64_t tip = dag.SelectTip().value();
   for (auto &[id, blk] : dag.blocks) {
     bool expected_blue = dag.blocks[tip].blue_set.count(id) > 0;
     EXPECT_EQ(blk.is_blue, expected_blue)
@@ -687,7 +688,7 @@ TEST_F(GHOSTDAGTest, GlobalInvariants_ComplexDAG) {
   // I14: ordering is a valid topological sort
   auto order = dag.ComputeGHOSTDAGOrdering();
   EXPECT_EQ(order.size(), dag.blocks.size());
-  std::map<int, int> pos;
+  std::map<uint64_t, uint64_t> pos;
   for (int i = 0; i < (int)order.size(); i++)
     pos[order[i]] = i;
   for (auto &[id, blk] : dag.blocks)

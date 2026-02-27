@@ -2,6 +2,7 @@
 
 #include "ns3/ipv4-address.h"
 
+#include <cstdint>
 #include <map>
 #include <set>
 #include <vector>
@@ -41,7 +42,7 @@ enum Messages {
 
   INV_TRANSACTIONS,
   REQ_TRANSACTIONS,
-  TRANSACTION,
+  TRANSACTIONS,
 };
 
 inline static std::string GetMessageName(Messages msg) {
@@ -66,25 +67,25 @@ inline static std::string GetMessageName(Messages msg) {
     return "INV_TRANSACTIONS";
   case REQ_TRANSACTIONS:
     return "REQ_TRANSACTIONS";
-  case TRANSACTION:
-    return "TRANSACTION";
+  case TRANSACTIONS:
+    return "TRANSACTIONS";
   default:
     return "UNKNOWN_MESSAGE";
   }
 }
 
 struct Transaction {
-  int tx_id;
-  int size_bytes;
+  uint64_t tx_id;
+  uint64_t size_bytes;
 
   bool operator<(const Transaction &other) const { return tx_id < other.tx_id; }
 };
 
 struct BlockHeader {
-  int block_id;
-  int miner_id;
+  uint64_t block_id;
+  uint64_t miner_id;
   double time_created;
-  std::vector<int> parent_hashes;
+  std::vector<uint64_t> parent_hashes;
 
   BlockHeader() : block_id(0), miner_id(0), time_created(0) {}
 
@@ -109,10 +110,10 @@ struct Block {
   // just metrics porpouse, not part of packet
   double time_received;
   ns3::Ipv4Address received_from;
-  int blue_score;
+  uint64_t blue_score;
   bool is_blue;
-  std::set<int> blue_set;
-  int selected_parent;
+  std::set<uint64_t> blue_set;
+  uint64_t selected_parent;
 
   Block()
       : size_in_bytes(0), time_received(0), blue_score(0), is_blue(false),
@@ -125,9 +126,9 @@ struct Block {
 };
 
 struct Blockchain {
-  Blockchain(int k = 0) : ghostdag_k(k), next_block_id(0) {
+  Blockchain(int k = 0) : ghostdag_k(k), next_block_id(1) {
     Block genesis;
-    genesis.header.block_id = 0;
+    genesis.header.block_id = 1;
     genesis.header.miner_id = -1;
     genesis.header.time_created = 0.0;
     genesis.time_received = 0.0;
@@ -141,40 +142,41 @@ struct Blockchain {
   virtual ~Blockchain() {}
 
   int ghostdag_k;
-  int next_block_id;
-  std::set<int> tips;
-  std::map<int, std::set<int>> children;
-  std::map<int, Block> blocks;
-  std::map<int, Block> orphans;
+  uint64_t next_block_id;
+  std::set<uint64_t> tips;
+  std::map<uint64_t, std::set<uint64_t>> children;
+  std::map<uint64_t, Block> blocks;
+  std::map<uint64_t, Block> orphans;
 
-  int GetDagWidth() const;
-  bool HasBlock(int block_id) const;
-  bool IsRed(int block_id) const;
-  bool IsOrphan(int block_id) const;
+  uint64_t GetDagWidth() const;
+  bool HasBlock(uint64_t block_id) const;
+  bool IsRed(uint64_t block_id) const;
+  bool IsOrphan(uint64_t block_id) const;
 
   std::vector<const Block *> GetChildrenPointers(const Block &block);
   std::vector<const Block *> GetParentsPointers(const Block &block);
 
   void AddBlock(const Block &new_block);
 
-  std::set<int> GetPast(int block_id);
-  std::set<int> GetFuture(int block_id) const;
-  std::set<int> GetAnticone(int block_id, int other_block_id);
+  std::set<uint64_t> GetPast(uint64_t block_id);
+  std::set<uint64_t> GetFuture(uint64_t block_id) const;
+  std::set<uint64_t> GetAnticone(uint64_t block_id, uint64_t other_block_id);
 
-  std::set<int> CalculateBlueSet(int block_id);
-  std::set<int> GreedyBlueSet(int block_id);
-  std::set<int> GreedyBlueSetFromTip(int tip_id, const std::set<int> &past_set);
+  std::set<uint64_t> CalculateBlueSet(uint64_t block_id);
+  std::set<uint64_t> GreedyBlueSet(uint64_t block_id);
+  std::set<uint64_t> GreedyBlueSetFromTip(uint64_t tip_id,
+                                          const std::set<uint64_t> &past_set);
 
-  int CalculateBlueScore(int block_id, const std::set<int> &blue_set);
-  bool IsKCluster(const std::set<int> &blue_set);
-  bool IsKClusterSubset(const std::set<int> &blue_set);
+  int CalculateBlueScore(uint64_t block_id, const std::set<uint64_t> &blue_set);
+  bool IsKCluster(const std::set<uint64_t> &blue_set);
+  bool IsKClusterSubset(const std::set<uint64_t> &blue_set);
 
-  int SelectTip();
-  std::vector<int> ComputeGHOSTDAGOrdering();
+  std::optional<uint64_t> SelectTip();
+  std::vector<uint64_t> ComputeGHOSTDAGOrdering();
 
 private:
-  std::map<int, std::set<int>> past_cache_;
+  std::map<uint64_t, std::set<uint64_t>> past_cache_;
 
-  std::vector<int> TopologicalSort(const std::set<int> &subset);
+  std::vector<uint64_t> TopologicalSort(const std::set<uint64_t> &subset);
   void ProcessOrphans();
 };
