@@ -1,11 +1,14 @@
 #pragma once
 
 #include "ns3/ipv4-address.h"
+#include "ns3/simulator.h"
 
 #include <cstdint>
 #include <map>
 #include <set>
 #include <vector>
+
+#define NOW ns3::Simulator::Now().GetSeconds()
 
 typedef struct {
   double download_speed;
@@ -127,7 +130,8 @@ struct Block {
 };
 
 struct Blockchain {
-  Blockchain(int k = 0) : ghostdag_k(k), next_block_id(1) {
+  Blockchain(int k = 0, uint64_t node_id = 0)
+      : ghostdag_k(k), next_block_id(1), node_id_metric(node_id) {
     Block genesis;
     genesis.header.block_id = 0;
     genesis.header.miner_id = -1;
@@ -144,6 +148,7 @@ struct Blockchain {
 
   int ghostdag_k;
   uint64_t next_block_id;
+  uint64_t node_id_metric;
   std::set<uint64_t> tips;
   std::map<uint64_t, std::set<uint64_t>> children;
   std::map<uint64_t, Block> blocks;
