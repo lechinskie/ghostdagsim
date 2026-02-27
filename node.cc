@@ -75,6 +75,12 @@ TypeId GhostDagNode::GetTypeId() {
                         UintegerValue(10000),
                         MakeUintegerAccessor(&GhostDagNode::m_mempoolSize),
                         MakeUintegerChecker<uint32_t>())
+          .AddAttribute(
+              "TxGenInterval",
+              "Mean interval between transaction generations (seconds)",
+              DoubleValue(0.1),
+              MakeDoubleAccessor(&GhostDagNode::m_txGenInterval),
+              MakeDoubleChecker<double>())
           .AddTraceSource("Rx", "A packet has been received",
                           MakeTraceSourceAccessor(&GhostDagNode::m_rx_trace),
                           "ns3::Packet::AddressTracedCallback");
@@ -82,17 +88,17 @@ TypeId GhostDagNode::GetTypeId() {
 }
 
 GhostDagNode::GhostDagNode()
-    : m_mempool(256), m_average_transaction_size(522.4),
+    : m_mempool(10000), m_average_transaction_size(522.4),
       m_transaction_index_size(2), m_generateTransactions(true),
-      m_txFeeLambda(150.0), m_mempoolSize(10000), m_txFeeDistribution(150.0),
-      m_txsGenerated(0) {
+      m_txGenInterval(0.1), m_txFeeLambda(150.0), m_mempoolSize(10000),
+      m_txFeeDistribution(1 / 150.0), m_txsGenerated(0) {
   NS_LOG_FUNCTION(this);
   m_socket = nullptr;
 
   std::random_device rd;
   m_generator.seed(rd() + 1);
 
-  m_ghostdag_port = 16443;
+  m_ghostdag_port = 16433;
   m_ghostdag_k = 10;
   m_seconds_per_min = 60;
   m_message_header_size = 90;
@@ -150,6 +156,9 @@ void GhostDagNode::DoDispose() {
 
 void GhostDagNode::StartApplication() {
   NS_LOG_FUNCTION(this);
+  m_blockchain.ghostdag_k = static_cast<int>(m_ghostdag_k);
+  m_txFeeDistribution =
+      std::exponential_distribution<double>(1.0 / m_txFeeLambda);
 
   srand(time(nullptr) + GetNode()->GetId());
 
@@ -164,15 +173,16 @@ void GhostDagNode::StartApplication() {
 
   if (!m_socket) {
     m_socket = Socket::CreateSocket(GetNode(), m_tid);
-    InetSocketAddress local =
-        InetSocketAddress(Ipv4Address::GetAny(), m_ghostdag_port);
-    m_socket->Bind(local);
+    InetSocketAddress localAddr = InetSocketAddress::ConvertFrom(m_local);
+    m_ghostdag_port = localAddr.GetPort();
+
+    m_socket->Bind(m_local);
     m_socket->Listen();
 
     if (addressUtils::IsMulticast(m_local)) {
       Ptr<UdpSocket> udpSocket = DynamicCast<UdpSocket>(m_socket);
       if (udpSocket) {
-        udpSocket->MulticastJoinGroup(0, local);
+        udpSocket->MulticastJoinGroup(0, m_local);
       } else {
         NS_FATAL_ERROR("Error: joining multicast on a non-UDP socket");
       }
@@ -190,20 +200,21 @@ void GhostDagNode::StartApplication() {
 
   NS_LOG_DEBUG("Node " << GetNode()->GetId() << ": Creating peer sockets");
   for (const auto &peer_addr : m_peers_addresses) {
-    m_peers_sockets[peer_addr] =
-        Socket::CreateSocket(GetNode(), TcpSocketFactory::GetTypeId());
-    m_peers_sockets[peer_addr]->Connect(
-        InetSocketAddress(peer_addr, m_ghostdag_port));
+    CreatePeerSocket(peer_addr);
   }
 
+  m_mempool = Mempool(static_cast<size_t>(m_mempoolSize));
   StartTransactionGeneration();
 }
 
 void GhostDagNode::StopApplication() {
   NS_LOG_FUNCTION(this);
-  for (auto &socket_pair : m_peers_sockets) {
-    socket_pair.second->Close();
+
+  for (auto &[addr, sock] : m_peers_sockets) {
+    sock->Close();
+    m_socket_to_peer.erase(sock);
   }
+  m_pending_messages.clear();
 
   if (m_socket) {
     m_socket->Close();
@@ -240,12 +251,11 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
 
       auto data = nlohmann::json::parse(parsed_packet, nullptr, false);
       if (data.is_discarded()) {
-        m_buffered_data[from].erase(0, pos + 1);
         continue;
       }
 
-      uint64_t msg_data = data.value("msg", -1);
-      if (msg_data != -1) {
+      uint64_t msg_data = data.value("msg", 0);
+      if (msg_data != (uint64_t)NO_MESSAGE) {
         std::cout << "At time " << Simulator::Now().GetSeconds()
                   << "s ghostdag node " << GetNode()->GetId() << " received "
                   << packet->GetSize() << " bytes from "
@@ -253,8 +263,6 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
                   << InetSocketAddress::ConvertFrom(from).GetPort()
                   << " with info = " << data.dump(4);
         ProcessMessage((enum Messages)msg_data, parsed_packet, from);
-      } else {
-        m_buffered_data[from].erase(0, pos + 1);
       }
     }
   }
@@ -264,24 +272,29 @@ void GhostDagNode::SendMessage(enum Messages recv, enum Messages type,
                                std::string payload, Address &to) {
   nlohmann::json d = nlohmann::json::parse(payload);
   d["msg"] = type;
-  payload = d.dump();
-  Ptr<Packet> packet =
-      Create<Packet>((uint8_t *)payload.c_str(), payload.size());
-  const uint8_t buf[] = {MSG_DELIMITER};
+  std::string serialized = d.dump();
 
   InetSocketAddress peer = InetSocketAddress::ConvertFrom(to);
   Ipv4Address ip = peer.GetIpv4();
-  auto it = m_peers_sockets.find(ip);
 
-  if (it == m_peers_sockets.end()) {
-    m_peers_sockets[ip] =
-        Socket::CreateSocket(GetNode(), TcpSocketFactory::GetTypeId());
-    m_peers_sockets[ip]->Connect(InetSocketAddress(ip, m_ghostdag_port));
+  auto pending_it = m_pending_messages.find(ip);
+  if (pending_it != m_pending_messages.end()) {
+    pending_it->second.push_back(serialized);
     return;
   }
 
-  if (m_peers_sockets[ip]->Send(packet) > 0) {
-    m_peers_sockets[ip]->Send(buf, 1, 0);
+  auto it = m_peers_sockets.find(ip);
+  if (it == m_peers_sockets.end()) {
+    m_pending_messages[ip].push_back(serialized);
+    CreatePeerSocket(ip);
+    return;
+  }
+
+  Ptr<Packet> packet =
+      Create<Packet>((uint8_t *)serialized.c_str(), serialized.size());
+  const uint8_t delim[] = {MSG_DELIMITER};
+  if (it->second->Send(packet) > 0) {
+    it->second->Send(delim, 1, 0);
   }
 }
 
@@ -368,6 +381,7 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
         Transaction tx;
         tx.tx_id = txData.value("tx_id", uint64_t{0});
         tx.size_bytes = txData.value("size_bytes", uint32_t{522});
+        tx.fee = txData.value("fee", uint32_t{0});
         txs.push_back(tx);
       }
     }
@@ -387,17 +401,18 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
 
 void GhostDagNode::HandleInvRelayBlock(const std::string &block_hash,
                                        Address &from) {
-  NS_LOG_FUNCTION(this << block_hash);
-
   uint64_t block_id = std::stoul(block_hash);
+  if (m_blockchain.HasBlock(block_id) || m_blockchain.IsOrphan(block_id))
+    return;
 
-  if (!m_blockchain.HasBlock(block_id) && !m_blockchain.IsOrphan(block_id)) {
+  bool first_announcement = m_queue_inv[block_hash].empty();
+  m_queue_inv[block_hash].push_back(from);
+
+  if (first_announcement) {
     nlohmann::json req;
     req["block_hash"] = block_hash;
-
     SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, req.dump(), from);
 
-    m_queue_inv[block_hash].push_back(from);
     m_inv_timeouts[block_hash] =
         Simulator::Schedule(m_inv_timeout_minutes,
                             &GhostDagNode::InvTimeoutExpired, this, block_hash);
@@ -444,33 +459,76 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
   InetSocketAddress peer = InetSocketAddress::ConvertFrom(from);
   block.received_from = peer.GetIpv4();
 
-  for (const auto &tx : block.transactions) {
-    if (m_mempool.size() < (size_t)m_mempoolSize) {
-      uint64_t txId = tx.tx_id;
-      uint32_t fee = 150;
-      m_mempool.insert(GetNode()->GetId(), txId, fee);
-    }
+  if (m_blockchain.HasBlock(new_block.header.block_id) ||
+      m_blockchain.IsOrphan(new_block.header.block_id)) {
+    NS_LOG_DEBUG("Node " << GetNode()->GetId() << " already has block "
+                         << new_block.header.block_id
+                         << ", ignoring duplicate");
+    return;
   }
+
+  for (const auto &tx : block.transactions) {
+    uint32_t miner_id = IdFromTxId(tx.tx_id);
+    HtabIterator it = m_mempool.find(miner_id, tx.tx_id);
+    if (it.isValid()) {
+      m_mempool.eraseTransaction(it);
+    }
+    m_known_txs.insert(tx.tx_id);
+  }
+
+  std::string blockHash = std::to_string(new_block.header.block_id);
+  auto timeout_it = m_inv_timeouts.find(blockHash);
+  if (timeout_it != m_inv_timeouts.end()) {
+    Simulator::Cancel(timeout_it->second);
+    m_inv_timeouts.erase(timeout_it);
+  }
+  m_queue_inv.erase(blockHash);
 
   m_blockchain.AddBlock(block);
 
-  std::string blockHash = std::to_string(block.header.block_id);
-  BroadcastInvBlock(blockHash);
+  BroadcastInvBlock(blockHash, peer.GetIpv4());
 }
 
 void GhostDagNode::InvTimeoutExpired(std::string block_hash) {
   NS_LOG_FUNCTION(this << block_hash);
-  m_queue_inv.erase(block_hash);
-  m_inv_timeouts.erase(block_hash);
+
+  auto it = m_queue_inv.find(block_hash);
+  if (it == m_queue_inv.end())
+    return;
+
+  it->second.erase(it->second.begin());
+
+  if (!it->second.empty()) {
+    Address next = it->second.front();
+
+    nlohmann::json req;
+    req["block_hash"] = block_hash;
+    SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, req.dump(), next);
+
+    m_inv_timeouts[block_hash] =
+        Simulator::Schedule(m_inv_timeout_minutes,
+                            &GhostDagNode::InvTimeoutExpired, this, block_hash);
+
+    NS_LOG_DEBUG("Node " << GetNode()->GetId() << " retrying block "
+                         << block_hash << " from next peer");
+  } else {
+    m_queue_inv.erase(it);
+    m_inv_timeouts.erase(block_hash);
+    NS_LOG_WARN("Node " << GetNode()->GetId() << " gave up fetching block "
+                        << block_hash);
+  }
 }
 
-void GhostDagNode::BroadcastInvBlock(const std::string &block_hash) {
+void GhostDagNode::BroadcastInvBlock(const std::string &block_hash,
+                                     Ipv4Address exclude) {
   NS_LOG_FUNCTION(this << block_hash);
 
   nlohmann::json inv;
   inv["block_hash"] = block_hash;
 
   for (const auto &peer_addr : m_peers_addresses) {
+    if (peer_addr == exclude)
+      continue;
     InetSocketAddress peer = InetSocketAddress(peer_addr, m_ghostdag_port);
     auto addr = Address(peer);
     SendMessage(NO_MESSAGE, INV_RELAY_BLOCK, inv.dump(), addr);
@@ -530,9 +588,9 @@ void GhostDagNode::HandleReqTransactions(
 
   for (const auto &hash : tx_hashes) {
     uint64_t tx_id = std::stoull(hash);
-    uint32_t miner_id = IdFromTxId(tx_id);
+    uint32_t node_id = IdFromTxId(tx_id);
 
-    HtabIterator it = m_mempool.find(miner_id, tx_id);
+    HtabIterator it = m_mempool.find(node_id, tx_id);
     if (!it.isValid()) {
       continue; // Evicted or never had it
     }
@@ -586,9 +644,11 @@ void GhostDagNode::HandleTransactions(const std::vector<Transaction> &txs,
       continue;
     }
 
-    uint32_t miner_id = IdFromTxId(tx.tx_id);
-    uint32_t fee = static_cast<uint32_t>(m_txFeeDistribution(m_generator));
-    m_mempool.insert(miner_id, tx.tx_id, fee);
+    uint32_t node_id = IdFromTxId(tx.tx_id);
+    uint32_t fee =
+        tx.fee > 0 ? tx.fee
+                   : static_cast<uint32_t>(m_txFeeDistribution(m_generator));
+    m_mempool.insert(node_id, tx.tx_id, fee);
 
     m_pending_inv_tx.push_back(hash);
 
@@ -701,7 +761,7 @@ void GhostDagNode::GenerateTransaction() {
 }
 
 void GhostDagNode::ScheduleNextTxGeneration() {
-  std::exponential_distribution<double> txRate(1.0 / 0.1);
+  std::exponential_distribution<double> txRate(1.0 / m_txGenInterval);
   double nextTxTime = txRate(m_generator);
 
   NS_LOG_DEBUG("Node " << GetNode()->GetId()
@@ -735,7 +795,7 @@ void GhostDagNode::StopTransactionGeneration() {
 }
 
 /*
- * ns3 boilerplate
+ * ns3 life cycle managment
  * */
 bool GhostDagNode::HandleConnectionRequest(Ptr<Socket> s, const Address &from) {
   NS_LOG_DEBUG("Node " << GetNode()->GetId() << " accepting connection from "
@@ -754,6 +814,54 @@ void GhostDagNode::HandlePeerError(Ptr<Socket> socket) {
 void GhostDagNode::HandleAccept(Ptr<Socket> s, const Address &from) {
   NS_LOG_FUNCTION(this << s << from);
   s->SetRecvCallback(MakeCallback(&GhostDagNode::HandleRead, this));
+}
+
+Ptr<Socket> GhostDagNode::CreatePeerSocket(Ipv4Address peer_addr) {
+  auto sock = Socket::CreateSocket(GetNode(), TcpSocketFactory::GetTypeId());
+  m_socket_to_peer[sock] = peer_addr;
+  m_peers_sockets[peer_addr] = sock;
+
+  m_pending_messages.emplace(peer_addr, std::vector<std::string>{});
+
+  sock->SetConnectCallback(
+      MakeCallback(&GhostDagNode::HandleConnectionSucceeded, this),
+      MakeCallback(&GhostDagNode::HandleConnectionFailed, this));
+  sock->Connect(InetSocketAddress(peer_addr, m_ghostdag_port));
+  return sock;
+}
+
+void GhostDagNode::HandleConnectionSucceeded(Ptr<Socket> socket) {
+  auto map_it = m_socket_to_peer.find(socket);
+  if (map_it == m_socket_to_peer.end())
+    return;
+
+  Ipv4Address peer_addr = map_it->second;
+
+  auto pending_it = m_pending_messages.find(peer_addr);
+  if (pending_it != m_pending_messages.end()) {
+    const uint8_t delim[] = {MSG_DELIMITER};
+    for (const auto &msg : pending_it->second) {
+      Ptr<Packet> packet = Create<Packet>((uint8_t *)msg.c_str(), msg.size());
+      if (socket->Send(packet) > 0) {
+        socket->Send(delim, 1, 0);
+      }
+    }
+    m_pending_messages.erase(pending_it);
+  }
+}
+
+void GhostDagNode::HandleConnectionFailed(Ptr<Socket> socket) {
+  auto map_it = m_socket_to_peer.find(socket);
+  if (map_it == m_socket_to_peer.end())
+    return;
+
+  Ipv4Address peer_addr = map_it->second;
+  NS_LOG_WARN("Node " << GetNode()->GetId() << ": connection FAILED to "
+                      << peer_addr);
+
+  m_peers_sockets.erase(peer_addr);
+  m_pending_messages.erase(peer_addr);
+  m_socket_to_peer.erase(map_it);
 }
 
 } // namespace ns3

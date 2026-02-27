@@ -43,6 +43,9 @@ protected:
   void HandlePeerClose(Ptr<Socket> socket);
   void HandlePeerError(Ptr<Socket> socket);
   bool HandleConnectionRequest(Ptr<Socket> s, const Address &from);
+  void HandleConnectionSucceeded(Ptr<Socket> socket);
+  void HandleConnectionFailed(Ptr<Socket> socket);
+  Ptr<Socket> CreatePeerSocket(Ipv4Address peer_addr);
 
   // --- Message Dispatcher ---
   void ProcessMessage(enum Messages msg_type, std::string payload,
@@ -63,7 +66,8 @@ protected:
   // --- Sending Helpers ---
   void SendMessage(enum Messages recv, enum Messages type, std::string payload,
                    Address &to);
-  void BroadcastInvBlock(const std::string &block_hash);
+  void BroadcastInvBlock(const std::string &block_hash,
+                         Ipv4Address exclude = Ipv4Address());
   void BroadcastInvTransactions(const std::vector<std::string> &tx_hashes);
 
   // --- Transaction generation ---
@@ -96,12 +100,14 @@ protected:
   std::map<Ipv4Address, double> m_peers_download_speeds;
   std::map<Ipv4Address, double> m_peers_upload_speeds;
   std::map<Ipv4Address, Ptr<Socket>> m_peers_sockets;
+  std::map<Ptr<Socket>, Ipv4Address> m_socket_to_peer;
 
   // State Maps
   std::map<std::string, std::vector<Address>> m_queue_inv;
   std::map<std::string, EventId> m_inv_timeouts;
   std::map<Address, std::string> m_buffered_data;
   std::map<std::string, Block> m_only_headers_received;
+  std::map<Ipv4Address, std::vector<std::string>> m_pending_messages;
 
   int m_ghostdag_port;
   uint8_t m_ghostdag_k;
@@ -112,6 +118,7 @@ protected:
 
   // Transaction generation
   bool m_generateTransactions;
+  double m_txGenInterval;
   double m_txFeeLambda;
   int m_mempoolSize;
   EventId m_nextTxGenerationEvent;

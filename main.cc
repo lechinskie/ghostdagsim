@@ -50,6 +50,7 @@ int main(int argc, char *argv[]) {
 
   uint16_t metricsPrometheusPort = 9091;
   double metricsFlushInterval = 2;
+  double txGenInterval = .5;
 
   double *minersHash;
   enum Region *minersRegions;
@@ -98,6 +99,8 @@ int main(int argc, char *argv[]) {
   cmd.AddValue("metrics_flush_interval",
                "Periodic flush interval in seconds (0 to disable)",
                metricsFlushInterval);
+  cmd.AddValue("tx_gen_interval", "Mean tx generation interval (s)",
+               txGenInterval);
 
   cmd.Parse(argc, argv);
 
