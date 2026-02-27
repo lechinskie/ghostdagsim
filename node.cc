@@ -256,12 +256,14 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
 
       uint64_t msg_data = data.value("msg", 0);
       if (msg_data != (uint64_t)NO_MESSAGE) {
-        std::cout << "At time " << Simulator::Now().GetSeconds()
-                  << "s ghostdag node " << GetNode()->GetId() << " received "
-                  << packet->GetSize() << " bytes from "
-                  << InetSocketAddress::ConvertFrom(from).GetIpv4() << " port "
-                  << InetSocketAddress::ConvertFrom(from).GetPort()
-                  << " with info = " << data.dump(4);
+        NS_LOG_INFO("At time " << Simulator::Now().GetSeconds()
+                               << "s ghostdag node " << GetNode()->GetId()
+                               << " received " << packet->GetSize()
+                               << " bytes from "
+                               << InetSocketAddress::ConvertFrom(from).GetIpv4()
+                               << " port "
+                               << InetSocketAddress::ConvertFrom(from).GetPort()
+                               << " with info = " << data.dump(4));
         ProcessMessage((enum Messages)msg_data, parsed_packet, from);
       }
     }
