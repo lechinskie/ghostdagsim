@@ -128,7 +128,7 @@ struct Block {
 struct Blockchain {
   Blockchain(int k = 0) : ghostdag_k(k), next_block_id(1) {
     Block genesis;
-    genesis.header.block_id = 1;
+    genesis.header.block_id = 0;
     genesis.header.miner_id = -1;
     genesis.header.time_created = 0.0;
     genesis.time_received = 0.0;
