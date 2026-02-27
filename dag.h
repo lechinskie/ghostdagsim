@@ -77,6 +77,7 @@ inline static std::string GetMessageName(Messages msg) {
 struct Transaction {
   uint64_t tx_id;
   uint64_t size_bytes;
+  uint32_t fee = 0;
 
   bool operator<(const Transaction &other) const { return tx_id < other.tx_id; }
 };

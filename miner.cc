@@ -177,6 +177,7 @@ std::set<Transaction> GhostDagMiner::SelectTransactions() {
         Transaction tx;
         tx.tx_id = it.iterator->txId;
         tx.size_bytes = 522;
+        tx.fee = it.iterator->fee;
         selected.insert(tx);
         m_mempool.eraseTransaction(it);
       }
@@ -188,6 +189,7 @@ std::set<Transaction> GhostDagMiner::SelectTransactions() {
         Transaction tx;
         tx.tx_id = it.iterator->txId;
         tx.size_bytes = 522;
+        tx.fee = it.iterator->fee;
         selected.insert(tx);
         m_mempool.eraseTransaction(it);
       }

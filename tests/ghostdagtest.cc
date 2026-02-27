@@ -200,18 +200,18 @@ TEST_F(GHOSTDAGTest, ManyParallelBlocks_AtMostKPlus1BlueFromMerge) {
   const uint64_t N = 20;
   Blockchain dag(K);
 
-  for (int i = 1; i <= N; i++)
+  for (uint64_t i = 1; i <= N; i++)
     dag.AddBlock(MakeBlock(i, {0}));
 
   // Add a merge block that references all N parallel blocks
   std::vector<uint64_t> all_parents;
-  for (int i = 1; i <= N; i++)
+  for (uint64_t i = 1; i <= N; i++)
     all_parents.push_back(i);
   dag.AddBlock(MakeBlock(N + 1, all_parents));
 
   uint64_t merge_tip = N + 1;
   uint64_t blue_in_merge = 0;
-  for (int i = 1; i <= N; i++)
+  for (uint64_t i = 1; i <= N; i++)
     if (dag.blocks[merge_tip].blue_set.count(i))
       ++blue_in_merge;
 
@@ -425,7 +425,7 @@ TEST_F(GHOSTDAGTest, SelectedParent_BlueScoreMonotonicity) {
   dag.AddBlock(MakeBlock(6, {5}));
 
   for (auto &[id, blk] : dag.blocks) {
-    if (blk.selected_parent == -1)
+    if ((int)blk.selected_parent == -1)
       continue; // genesis
     EXPECT_GE(blk.blue_score, dag.blocks[blk.selected_parent].blue_score)
         << "blue_score must be >= selected_parent's blue_score for block "
@@ -668,7 +668,7 @@ TEST_F(GHOSTDAGTest, GlobalInvariants_ComplexDAG) {
 
   // I6/I7: selected_parent has the max blue_score among parents
   for (auto &[id, blk] : dag.blocks) {
-    if (blk.selected_parent == -1)
+    if ((int)blk.selected_parent == -1)
       continue;
     for (int p : blk.header.parent_hashes)
       EXPECT_GE(dag.blocks[blk.selected_parent].blue_score,
