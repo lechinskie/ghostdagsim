@@ -125,7 +125,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  stop = (targetNumberOfBlocks * lambda / 60.0) / noMiners;
+  stop = (targetNumberOfBlocks * lambda / 60.0);
 
   GlobalValue::Bind("SimulatorImplementationType",
                     StringValue("ns3::DistributedSimulatorImpl"));
@@ -140,7 +140,7 @@ int main(int argc, char *argv[]) {
     std::cout << "Miners: " << noMiners << "\n";
     std::cout << "GHOSTDAG k: " << (int)ghostdagK << "\n";
     std::cout << "Lambda (block interval): " << lambda << "s\n";
-    std::cout << "Tau (propagation delay): " << tau << "s\n";
+    std::cout << "Tau (propagation delay multiplier): " << tau << "s\n";
     std::cout << "Txs per block: " << txsPerBlock << "\n";
     std::cout << "Mempool size: " << mempoolSize << "\n";
     std::cout << "Tx fee lambda: " << txFeeLambda << "\n";
