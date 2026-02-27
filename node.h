@@ -11,6 +11,7 @@
 #include "ns3/traced-callback.h"
 
 #include <map>
+#include <unordered_set>
 
 namespace ns3 {
 class GhostDagNode : public Application {
@@ -57,13 +58,13 @@ protected:
                              Address &from);
   void HandleReqTransactions(const std::vector<std::string> &tx_hashes,
                              Address &from);
-  void HandleTransaction(const Transaction &tx, Address &from);
+  void HandleTransactions(const std::vector<Transaction> &txs, Address &from);
 
   // --- Sending Helpers ---
   void SendMessage(enum Messages recv, enum Messages type, std::string payload,
                    Address &to);
   void BroadcastInvBlock(const std::string &block_hash);
-  void BroadcastInvTransaction(const std::string &tx_hash);
+  void BroadcastInvTransactions(const std::vector<std::string> &tx_hashes);
 
   // --- Transaction generation ---
   void StartTransactionGeneration();
@@ -73,11 +74,6 @@ protected:
 
   // --- Timeout & Queue Management ---
   void InvTimeoutExpired(std::string block_hash);
-  bool OnlyHeadersReceived(std::string block_hash);
-
-  // Metrics helpers
-  void RemoveSendTime();
-  void RemoveReceiveTime();
 
   Ptr<Socket> m_socket;
   Address m_local;
@@ -122,6 +118,20 @@ protected:
   std::mt19937 m_generator;
   std::exponential_distribution<double> m_txFeeDistribution;
   int m_txsGenerated;
+  std::vector<std::string> m_pending_inv_tx;
+  EventId m_invBatchEvent;
+  std::unordered_set<uint64_t> m_known_txs;
+  std::unordered_map<std::string, std::vector<Address>> m_queue_inv_tx;
+  std::unordered_map<std::string, EventId> m_inv_tx_timeouts;
+  static constexpr double INV_BATCH_INTERVAL_S = 0.1;
+  void FlushInvBatch(Ipv4Address exclude);
+  void InvTxTimeoutExpired(std::string tx_hash);
+  void BroadcastInvTransactions(const std::vector<std::string> &,
+                                Ipv4Address = Ipv4Address());
+
+  static inline uint32_t IdFromTxId(uint64_t txId) {
+    return static_cast<uint32_t>(txId >> 32);
+  }
 
   TracedCallback<Ptr<const Packet>, const Address &> m_rx_trace;
 };
