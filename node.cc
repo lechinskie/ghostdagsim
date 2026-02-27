@@ -157,6 +157,7 @@ void GhostDagNode::DoDispose() {
 void GhostDagNode::StartApplication() {
   NS_LOG_FUNCTION(this);
   m_blockchain.ghostdag_k = static_cast<int>(m_ghostdag_k);
+  m_blockchain.node_id_metric = GetNode()->GetId();
   m_txFeeDistribution =
       std::exponential_distribution<double>(1.0 / m_txFeeLambda);
 
@@ -457,6 +458,8 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
   double currentTime = Simulator::Now().GetSeconds();
   Block block = new_block;
   block.time_received = currentTime;
+  std::stringstream ipv4_from;
+  InetSocketAddress::ConvertFrom(from).GetIpv4().Print(ipv4_from);
 
   InetSocketAddress peer = InetSocketAddress::ConvertFrom(from);
   block.received_from = peer.GetIpv4();
@@ -466,6 +469,9 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
     NS_LOG_DEBUG("Node " << GetNode()->GetId() << " already has block "
                          << new_block.header.block_id
                          << ", ignoring duplicate");
+
+    METRIC_REDUNDANT_MSG(GetNode()->GetId(), new_block.header.block_id, "BLOCK",
+                         ipv4_from.str(), block.GetTotalSize(), currentTime);
     return;
   }
 
@@ -487,6 +493,27 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
   m_queue_inv.erase(blockHash);
 
   m_blockchain.AddBlock(block);
+
+  if (!m_blockchain.IsOrphan(block.header.block_id)) {
+    const Block &b = m_blockchain.blocks.at(block.header.block_id);
+    METRIC_BLOCK_COLORED(GetNode()->GetId(), block.header.block_id, b.is_blue,
+                         b.blue_score, b.blue_set.size(), b.selected_parent,
+                         NOW);
+  }
+
+  METRIC_BLOCK_RECEIVED(GetNode()->GetId(), new_block.header.block_id,
+                        (uint32_t)new_block.header.miner_id,
+                        new_block.header.time_created, currentTime,
+                        ipv4_from.str(), true);
+
+  uint64_t blue = 0;
+  uint64_t red = 0;
+  for (const auto &[id, blk] : m_blockchain.blocks) {
+    blk.is_blue ? ++blue : ++red;
+  }
+  METRIC_DAG_SNAPSHOT(GetNode()->GetId(), m_blockchain.blocks.size(), blue, red,
+                      m_blockchain.orphans.size(), m_blockchain.GetDagWidth(),
+                      NOW);
 
   BroadcastInvBlock(blockHash, peer.GetIpv4());
 }

@@ -122,6 +122,9 @@ int main(int argc, char *argv[]) {
   uint32_t systemId = MpiInterface::GetSystemId();
   uint32_t systemCount = MpiInterface::GetSize();
 
+  MetricsCollector::SetRank(systemId);
+  MetricsCollector::SetVerbose(false);
+
   if (systemId == 0) {
     std::cout << "\n=== GHOSTDAG Network Simulator ===\n";
     std::cout << "Total Nodes:                " << totalNoNodes << "\n";
@@ -223,6 +226,9 @@ int main(int argc, char *argv[]) {
 
   Simulator::Run();
   Simulator::Destroy();
+
+  MetricsCollector::PrintSummary();
+  MetricsCollector::Dump("results/run1");
 
   MpiInterface::Disable();
 
