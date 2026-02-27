@@ -44,6 +44,7 @@ TypeId GhostDagMiner::GetTypeId() {
 GhostDagMiner::GhostDagMiner()
     : m_blockGenInterval(20.0), m_txsPerBlock(100), m_txSelectionStrategy(0) {
   NS_LOG_FUNCTION(this);
+  m_generateTransactions = false;
 }
 
 GhostDagMiner::~GhostDagMiner() { NS_LOG_FUNCTION(this); }
@@ -123,14 +124,12 @@ void GhostDagMiner::MineBlock() {
   int minerId = GetNode()->GetId();
 
   Block newBlock;
-  uint32_t nodeId = GetNode()->GetId();
-  newBlock.header.block_id = std::stoi(
-      std::to_string(nodeId) + std::to_string(m_blockchain.next_block_id++));
-  ;
+  newBlock.header.block_id =
+      (static_cast<uint64_t>(minerId) << 32) | m_blockchain.next_block_id++;
   newBlock.header.miner_id = minerId;
   newBlock.header.time_created = currentTime;
 
-  for (int tip : m_blockchain.tips) {
+  for (uint64_t tip : m_blockchain.tips) {
     newBlock.header.parent_hashes.push_back(tip);
   }
 
@@ -176,7 +175,7 @@ std::set<Transaction> GhostDagMiner::SelectTransactions() {
       auto it = m_mempool.getRandomTransaction(m_generator);
       if (it.isValid()) {
         Transaction tx;
-        tx.tx_id = static_cast<int>(it.iterator->txId);
+        tx.tx_id = it.iterator->txId;
         tx.size_bytes = 522;
         selected.insert(tx);
         m_mempool.eraseTransaction(it);
@@ -187,7 +186,7 @@ std::set<Transaction> GhostDagMiner::SelectTransactions() {
       auto it = m_mempool.getSortedTransactionDescending();
       if (it.isValid()) {
         Transaction tx;
-        tx.tx_id = static_cast<int>(it.iterator->txId);
+        tx.tx_id = it.iterator->txId;
         tx.size_bytes = 522;
         selected.insert(tx);
         m_mempool.eraseTransaction(it);
