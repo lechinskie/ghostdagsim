@@ -138,9 +138,9 @@ void GhostDagNode::SetNodeInternetSpeeds(
   m_upload_speed = internet_speeds.upload_speed * 1000000 / 8;
 }
 
-// ============================================================================
-// Application Lifecycle
-// ============================================================================
+/*
+ * App life cycle
+ * */
 
 void GhostDagNode::DoDispose() {
   NS_LOG_FUNCTION(this);
@@ -244,16 +244,14 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
         continue;
       }
 
-      int msg_data = data.value("msg", -1);
+      uint64_t msg_data = data.value("msg", -1);
       if (msg_data != -1) {
-        NS_LOG_INFO("At time " << Simulator::Now().GetSeconds()
-                               << "s ghostdag node " << GetNode()->GetId()
-                               << " received " << packet->GetSize()
-                               << " bytes from "
-                               << InetSocketAddress::ConvertFrom(from).GetIpv4()
-                               << " port "
-                               << InetSocketAddress::ConvertFrom(from).GetPort()
-                               << " with info = " << data.dump(4));
+        std::cout << "At time " << Simulator::Now().GetSeconds()
+                  << "s ghostdag node " << GetNode()->GetId() << " received "
+                  << packet->GetSize() << " bytes from "
+                  << InetSocketAddress::ConvertFrom(from).GetIpv4() << " port "
+                  << InetSocketAddress::ConvertFrom(from).GetPort()
+                  << " with info = " << data.dump(4);
         ProcessMessage((enum Messages)msg_data, parsed_packet, from);
       } else {
         m_buffered_data[from].erase(0, pos + 1);
@@ -314,13 +312,13 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
     if (data.contains("block")) {
       Block newBlock;
       auto &blockData = data["block"];
-      newBlock.header.block_id = blockData.value("block_id", 0);
-      newBlock.header.miner_id = blockData.value("miner_id", 0);
+      newBlock.header.block_id = blockData.value("block_id", uint64_t{0});
+      newBlock.header.miner_id = blockData.value("miner_id", uint64_t{0});
       newBlock.header.time_created = blockData.value("time_created", 0.0);
 
       if (blockData.contains("parent_hashes")) {
         for (auto &ph : blockData["parent_hashes"]) {
-          newBlock.header.parent_hashes.push_back(ph.get<int>());
+          newBlock.header.parent_hashes.push_back(ph.get<uint64_t>());
         }
       }
 
@@ -337,6 +335,45 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
     }
     break;
   }
+  case INV_TRANSACTIONS: {
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " received INV_TRANSACTIONS");
+    auto data = nlohmann::json::parse(payload);
+    std::vector<std::string> tx_hashes;
+    if (data.contains("tx_hashes")) {
+      for (auto &tx_hash : data["tx_hashes"]) {
+        tx_hashes.emplace_back(tx_hash);
+      }
+    }
+    HandleInvTransactions(tx_hashes, from);
+    break;
+  }
+  case REQ_TRANSACTIONS: {
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " received REQ_TRANSACTIONS");
+    auto data = nlohmann::json::parse(payload);
+    std::vector<std::string> tx_hashes;
+    if (data.contains("tx_hashes")) {
+      for (const auto &h : data["tx_hashes"]) {
+        tx_hashes.emplace_back(h.get<std::string>());
+      }
+    }
+    HandleReqTransactions(tx_hashes, from);
+    break;
+  }
+  case TRANSACTIONS: {
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " received TRANSACTIONS");
+    auto data = nlohmann::json::parse(payload);
+    std::vector<Transaction> txs;
+    if (data.contains("transactions")) {
+      for (const auto &txData : data["transactions"]) {
+        Transaction tx;
+        tx.tx_id = txData.value("tx_id", uint64_t{0});
+        tx.size_bytes = txData.value("size_bytes", uint32_t{522});
+        txs.push_back(tx);
+      }
+    }
+    HandleTransactions(txs, from);
+    break;
+  }
   default:
     NS_LOG_ERROR("Node: " << GetNode()->GetId()
                           << " Received not know message: " << payload);
@@ -344,30 +381,15 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
   }
 }
 
-bool GhostDagNode::HandleConnectionRequest(Ptr<Socket> s, const Address &from) {
-  NS_LOG_DEBUG("Node " << GetNode()->GetId() << " accepting connection from "
-                       << from);
-  return true; // Explicitly accept the connection
-}
-
-void GhostDagNode::HandlePeerClose(Ptr<Socket> socket) {
-  NS_LOG_FUNCTION(this << socket);
-}
-
-void GhostDagNode::HandlePeerError(Ptr<Socket> socket) {
-  NS_LOG_FUNCTION(this << socket);
-}
-
-void GhostDagNode::HandleAccept(Ptr<Socket> s, const Address &from) {
-  NS_LOG_FUNCTION(this << s << from);
-  s->SetRecvCallback(MakeCallback(&GhostDagNode::HandleRead, this));
-}
+/*
+ * Block Handling Logic
+ * */
 
 void GhostDagNode::HandleInvRelayBlock(const std::string &block_hash,
                                        Address &from) {
   NS_LOG_FUNCTION(this << block_hash);
 
-  int block_id = std::stoi(block_hash);
+  uint64_t block_id = std::stoul(block_hash);
 
   if (!m_blockchain.HasBlock(block_id) && !m_blockchain.IsOrphan(block_id)) {
     nlohmann::json req;
@@ -386,7 +408,7 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
                                        Address &from) {
   NS_LOG_FUNCTION(this << block_hash);
 
-  int block_id = std::stoi(block_hash);
+  uint64_t block_id = std::stoul(block_hash);
 
   if (m_blockchain.HasBlock(block_id)) {
     const Block &block = m_blockchain.blocks.at(block_id);
@@ -396,7 +418,7 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
     blockMsg["block"]["miner_id"] = block.header.miner_id;
     blockMsg["block"]["time_created"] = block.header.time_created;
     blockMsg["block"]["parent_hashes"] = nlohmann::json::array();
-    for (int parent : block.header.parent_hashes) {
+    for (uint64_t parent : block.header.parent_hashes) {
       blockMsg["block"]["parent_hashes"].push_back(parent);
     }
 
@@ -442,25 +464,6 @@ void GhostDagNode::InvTimeoutExpired(std::string block_hash) {
   m_inv_timeouts.erase(block_hash);
 }
 
-bool GhostDagNode::OnlyHeadersReceived(std::string block_hash) {
-  return m_only_headers_received.find(block_hash) !=
-         m_only_headers_received.end();
-}
-
-void GhostDagNode::RemoveSendTime() {}
-
-void GhostDagNode::RemoveReceiveTime() {}
-
-void GhostDagNode::HandleInvTransactions(
-    const std::vector<std::string> &tx_hashes, Address &from) {}
-
-void GhostDagNode::HandleReqTransactions(
-    const std::vector<std::string> &tx_hashes, Address &from) {}
-
-void GhostDagNode::HandleTransaction(const Transaction &tx, Address &from) {}
-
-void GhostDagNode::BroadcastInvTransaction(const std::string &tx_hash) {}
-
 void GhostDagNode::BroadcastInvBlock(const std::string &block_hash) {
   NS_LOG_FUNCTION(this << block_hash);
 
@@ -472,6 +475,241 @@ void GhostDagNode::BroadcastInvBlock(const std::string &block_hash) {
     auto addr = Address(peer);
     SendMessage(NO_MESSAGE, INV_RELAY_BLOCK, inv.dump(), addr);
   }
+}
+
+/*
+ * Transaction Logic
+ * */
+
+void GhostDagNode::HandleInvTransactions(
+    const std::vector<std::string> &tx_hashes, Address &from) {
+
+  NS_LOG_FUNCTION(this);
+
+  std::vector<std::string> wanted;
+
+  for (const auto &hash : tx_hashes) {
+    uint64_t tx_id = std::stoull(hash);
+
+    if (m_known_txs.count(tx_id)) {
+      continue;
+    }
+
+    bool first_announcement = m_queue_inv_tx[hash].empty();
+    m_queue_inv_tx[hash].push_back(from);
+
+    if (first_announcement) {
+      m_inv_tx_timeouts[hash] =
+          Simulator::Schedule(m_inv_timeout_minutes,
+                              &GhostDagNode::InvTxTimeoutExpired, this, hash);
+
+      wanted.push_back(hash);
+    }
+  }
+
+  if (wanted.empty()) {
+    return;
+  }
+
+  nlohmann::json req;
+  req["tx_hashes"] = wanted;
+  SendMessage(NO_MESSAGE, REQ_TRANSACTIONS, req.dump(), from);
+
+  NS_LOG_DEBUG("Node " << GetNode()->GetId() << " requested " << wanted.size()
+                       << " txs in one REQ");
+}
+
+void GhostDagNode::HandleReqTransactions(
+    const std::vector<std::string> &tx_hashes, Address &from) {
+
+  NS_LOG_FUNCTION(this);
+
+  nlohmann::json msg;
+  msg["transactions"] = nlohmann::json::array();
+  uint64_t found_count = 0;
+
+  for (const auto &hash : tx_hashes) {
+    uint64_t tx_id = std::stoull(hash);
+    uint32_t miner_id = IdFromTxId(tx_id);
+
+    HtabIterator it = m_mempool.find(miner_id, tx_id);
+    if (!it.isValid()) {
+      continue; // Evicted or never had it
+    }
+
+    nlohmann::json txJson;
+    txJson["tx_id"] = it.iterator->txId;
+    txJson["size_bytes"] = static_cast<uint32_t>(m_average_transaction_size);
+    txJson["fee"] = it.iterator->fee;
+    msg["transactions"].push_back(txJson);
+    found_count++;
+  }
+
+  if (found_count == 0) {
+    NS_LOG_DEBUG("Node " << GetNode()->GetId() << " had none of the "
+                         << tx_hashes.size() << " requested txs");
+    return;
+  }
+
+  SendMessage(NO_MESSAGE, TRANSACTIONS, msg.dump(), from);
+
+  NS_LOG_DEBUG("Node " << GetNode()->GetId() << " replied with " << found_count
+                       << "/" << tx_hashes.size()
+                       << " txs in one TRANSACTION message");
+}
+
+void GhostDagNode::HandleTransactions(const std::vector<Transaction> &txs,
+                                      Address &from) {
+  NS_LOG_FUNCTION(this);
+
+  InetSocketAddress sender = InetSocketAddress::ConvertFrom(from);
+
+  for (const auto &tx : txs) {
+    std::string hash = std::to_string(tx.tx_id);
+
+    auto t_it = m_inv_tx_timeouts.find(hash);
+    if (t_it != m_inv_tx_timeouts.end()) {
+      Simulator::Cancel(t_it->second);
+      m_inv_tx_timeouts.erase(t_it);
+    }
+    m_queue_inv_tx.erase(hash);
+
+    if (m_known_txs.count(tx.tx_id)) {
+      continue;
+    }
+
+    m_known_txs.insert(tx.tx_id);
+
+    if (m_mempool.size() >= static_cast<size_t>(m_mempoolSize)) {
+      NS_LOG_DEBUG("Node " << GetNode()->GetId()
+                           << " mempool full, dropping tx " << tx.tx_id);
+      continue;
+    }
+
+    uint32_t miner_id = IdFromTxId(tx.tx_id);
+    uint32_t fee = static_cast<uint32_t>(m_txFeeDistribution(m_generator));
+    m_mempool.insert(miner_id, tx.tx_id, fee);
+
+    m_pending_inv_tx.push_back(hash);
+
+    NS_LOG_DEBUG("Node " << GetNode()->GetId() << " accepted tx " << tx.tx_id
+                         << " fee=" << fee);
+  }
+
+  if (!m_pending_inv_tx.empty() && !m_invBatchEvent.IsPending()) {
+    m_invBatchEvent = Simulator::Schedule(Seconds(INV_BATCH_INTERVAL_S),
+                                          &GhostDagNode::FlushInvBatch, this,
+                                          sender.GetIpv4());
+  }
+}
+
+void GhostDagNode::FlushInvBatch(Ipv4Address exclude) {
+  NS_LOG_FUNCTION(this);
+
+  if (m_pending_inv_tx.empty()) {
+    return;
+  }
+
+  std::vector<std::string> batch;
+  batch.swap(m_pending_inv_tx);
+
+  BroadcastInvTransactions(batch, exclude);
+
+  NS_LOG_DEBUG("Node " << GetNode()->GetId()
+                       << " flushed INV batch: " << batch.size() << " txs");
+}
+
+void GhostDagNode::InvTxTimeoutExpired(std::string tx_hash) {
+  NS_LOG_FUNCTION(this << tx_hash);
+
+  auto it = m_queue_inv_tx.find(tx_hash);
+  if (it == m_queue_inv_tx.end()) {
+    return;
+  }
+
+  it->second.erase(it->second.begin());
+
+  if (!it->second.empty()) {
+    Address next = it->second.front();
+
+    nlohmann::json req;
+    req["tx_hashes"] = std::vector<std::string>{tx_hash};
+    SendMessage(NO_MESSAGE, REQ_TRANSACTIONS, req.dump(), next);
+
+    m_inv_tx_timeouts[tx_hash] =
+        Simulator::Schedule(m_inv_timeout_minutes,
+                            &GhostDagNode::InvTxTimeoutExpired, this, tx_hash);
+
+    NS_LOG_DEBUG("Node " << GetNode()->GetId() << " retrying tx " << tx_hash
+                         << " from next peer");
+  } else {
+    m_queue_inv_tx.erase(it);
+    m_inv_tx_timeouts.erase(tx_hash);
+    NS_LOG_WARN("Node " << GetNode()->GetId() << " gave up fetching tx "
+                        << tx_hash);
+  }
+}
+
+void GhostDagNode::BroadcastInvTransactions(
+    const std::vector<std::string> &tx_hashes, Ipv4Address exclude) {
+
+  if (tx_hashes.empty()) {
+    return;
+  }
+
+  nlohmann::json inv;
+  inv["tx_hashes"] = tx_hashes;
+  std::string payload = inv.dump();
+
+  for (const auto &peer_addr : m_peers_addresses) {
+    if (peer_addr == exclude) {
+      continue;
+    }
+    InetSocketAddress peer(peer_addr, m_ghostdag_port);
+    Address addr(peer);
+    SendMessage(NO_MESSAGE, INV_TRANSACTIONS, payload, addr);
+  }
+}
+
+void GhostDagNode::GenerateTransaction() {
+  NS_LOG_FUNCTION(this);
+
+  uint64_t txId =
+      (static_cast<uint64_t>(GetNode()->GetId()) << 32) | m_txsGenerated;
+  auto fee = static_cast<uint32_t>(m_txFeeDistribution(m_generator));
+
+  if (m_mempool.size() < static_cast<size_t>(m_mempoolSize)) {
+    m_mempool.insert(GetNode()->GetId(), txId, fee);
+    m_known_txs.insert(txId);
+    m_txsGenerated++;
+
+    m_pending_inv_tx.push_back(std::to_string(txId));
+
+    if (!m_invBatchEvent.IsPending()) {
+      m_invBatchEvent = Simulator::Schedule(Seconds(INV_BATCH_INTERVAL_S),
+                                            &GhostDagNode::FlushInvBatch, this,
+                                            Ipv4Address());
+    }
+
+    NS_LOG_DEBUG("Node " << GetNode()->GetId() << " generated tx " << txId
+                         << " fee=" << fee);
+  } else {
+    NS_LOG_DEBUG("Node " << GetNode()->GetId() << " mempool full");
+  }
+
+  ScheduleNextTxGeneration();
+}
+
+void GhostDagNode::ScheduleNextTxGeneration() {
+  std::exponential_distribution<double> txRate(1.0 / 0.1);
+  double nextTxTime = txRate(m_generator);
+
+  NS_LOG_DEBUG("Node " << GetNode()->GetId()
+                       << " will generate next transaction in " << nextTxTime
+                       << "s");
+
+  m_nextTxGenerationEvent = Simulator::Schedule(
+      Seconds(nextTxTime), &GhostDagNode::GenerateTransaction, this);
 }
 
 void GhostDagNode::StartTransactionGeneration() {
@@ -496,38 +734,26 @@ void GhostDagNode::StopTransactionGeneration() {
                       << " transactions");
 }
 
-void GhostDagNode::ScheduleNextTxGeneration() {
-  std::exponential_distribution<double> txRate(1.0 / 0.1);
-  double nextTxTime = txRate(m_generator);
-
-  NS_LOG_DEBUG("Node " << GetNode()->GetId()
-                       << " will generate next transaction in " << nextTxTime
-                       << "s");
-
-  m_nextTxGenerationEvent = Simulator::Schedule(
-      Seconds(nextTxTime), &GhostDagNode::GenerateTransaction, this);
+/*
+ * ns3 boilerplate
+ * */
+bool GhostDagNode::HandleConnectionRequest(Ptr<Socket> s, const Address &from) {
+  NS_LOG_DEBUG("Node " << GetNode()->GetId() << " accepting connection from "
+                       << from);
+  return true; // Explicitly accept the connection
 }
 
-void GhostDagNode::GenerateTransaction() {
-  NS_LOG_FUNCTION(this);
+void GhostDagNode::HandlePeerClose(Ptr<Socket> socket) {
+  NS_LOG_FUNCTION(this << socket);
+}
 
-  uint64_t txId =
-      (static_cast<uint64_t>(GetNode()->GetId()) << 32) | m_txsGenerated;
-  auto fee = static_cast<uint32_t>(m_txFeeDistribution(m_generator));
+void GhostDagNode::HandlePeerError(Ptr<Socket> socket) {
+  NS_LOG_FUNCTION(this << socket);
+}
 
-  if (m_mempool.size() < (size_t)m_mempoolSize) {
-    m_mempool.insert(GetNode()->GetId(), txId, fee);
-    m_txsGenerated++;
-
-    NS_LOG_DEBUG("Node " << GetNode()->GetId() << " generated transaction "
-                         << txId << " with fee " << fee
-                         << " (mempool size: " << m_mempool.size() << ")");
-  } else {
-    NS_LOG_DEBUG("Node " << GetNode()->GetId()
-                         << " mempool full, cannot add transaction");
-  }
-
-  ScheduleNextTxGeneration();
+void GhostDagNode::HandleAccept(Ptr<Socket> s, const Address &from) {
+  NS_LOG_FUNCTION(this << s << from);
+  s->SetRecvCallback(MakeCallback(&GhostDagNode::HandleRead, this));
 }
 
 } // namespace ns3
