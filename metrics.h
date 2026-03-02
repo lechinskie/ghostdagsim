@@ -246,7 +246,7 @@ private:
   static std::map<uint64_t, double> s_orphanedAt;
 };
 
-#ifdef GHOSTDAG_METRICS
+#ifdef GHOSTDAGSIM_METRICS
 
 #define METRIC_BLOCK_MINED(miner, bid, nparents, width, ntxs, sz, t)           \
   MetricsCollector::RecordBlockMined(miner, bid, nparents, width, ntxs, sz, t)

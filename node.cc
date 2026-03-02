@@ -161,7 +161,7 @@ void GhostDagNode::StartApplication() {
   m_txFeeDistribution =
       std::exponential_distribution<double>(1.0 / m_txFeeLambda);
 
-  srand(time(nullptr) + GetNode()->GetId());
+  m_generator.seed(static_cast<uint32_t>(GetNode()->GetId()) * 2654435761u);
 
   NS_LOG_INFO("Node " << GetNode()->GetId()
                       << ": download speed = " << m_download_speed << " B/s");
@@ -445,6 +445,7 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
       nlohmann::json txJson;
       txJson["tx_id"] = tx.tx_id;
       txJson["size_bytes"] = tx.size_bytes;
+      txJson["fee"] = tx.fee;
       blockMsg["block"]["transactions"].push_back(txJson);
     }
 
@@ -494,12 +495,14 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
 
   m_blockchain.AddBlock(block);
 
+#ifdef GHOSTDAGSIM_METRICS
   if (!m_blockchain.IsOrphan(block.header.block_id)) {
     const Block &b = m_blockchain.blocks.at(block.header.block_id);
     METRIC_BLOCK_COLORED(GetNode()->GetId(), block.header.block_id, b.is_blue,
                          b.blue_score, b.blue_set.size(), b.selected_parent,
                          NOW);
   }
+#endif
 
   METRIC_BLOCK_RECEIVED(GetNode()->GetId(), new_block.header.block_id,
                         (uint32_t)new_block.header.miner_id,

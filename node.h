@@ -68,7 +68,11 @@ protected:
                    Address &to);
   void BroadcastInvBlock(const std::string &block_hash,
                          Ipv4Address exclude = Ipv4Address());
-  void BroadcastInvTransactions(const std::vector<std::string> &tx_hashes);
+
+  void BroadcastInvTransactions(const std::vector<std::string> &,
+                                Ipv4Address = Ipv4Address());
+  void FlushInvBatch(Ipv4Address exclude);
+  void InvTxTimeoutExpired(std::string tx_hash);
 
   // --- Transaction generation ---
   void StartTransactionGeneration();
@@ -131,10 +135,6 @@ protected:
   std::unordered_map<std::string, std::vector<Address>> m_queue_inv_tx;
   std::unordered_map<std::string, EventId> m_inv_tx_timeouts;
   static constexpr double INV_BATCH_INTERVAL_S = 0.1;
-  void FlushInvBatch(Ipv4Address exclude);
-  void InvTxTimeoutExpired(std::string tx_hash);
-  void BroadcastInvTransactions(const std::vector<std::string> &,
-                                Ipv4Address = Ipv4Address());
 
   static inline uint32_t IdFromTxId(uint64_t txId) {
     return static_cast<uint32_t>(txId >> 32);

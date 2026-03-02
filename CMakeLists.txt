@@ -6,10 +6,10 @@ add_library(
   ${HELPER_SOURCES}
 )
 
-option(GHOSTDAG_METRICS "Enable metrics" OFF)
-message(STATUS "Enabled to build ghostdagsim metrics")
-if(GHOSTDAG_METRICS)
-  add_compile_definitions(GHOSTDAG_METRICS)
+option(GHOSTDAGSIM_METRICS "Enable metrics" OFF)
+if(GHOSTDAGSIM_METRICS)
+  message(STATUS "Enabled to build ghostdagsim metrics")
+  add_compile_definitions(GHOSTDAGSIM_METRICS)
 endif()
 
 build_exec(
