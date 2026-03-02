@@ -42,7 +42,9 @@ TypeId GhostDagMiner::GetTypeId() {
 }
 
 GhostDagMiner::GhostDagMiner()
-    : m_blockGenInterval(20.0), m_txsPerBlock(100), m_txSelectionStrategy(0) {
+    : m_blockGenInterval(20.0), m_txsPerBlock(100), m_txSelectionStrategy(0),
+      m_minerGeneratedBlocks(0), m_previousBlockGenerationTime(0.0),
+      m_averageBlockGenInterval(0.0) {
   NS_LOG_FUNCTION(this);
   m_generateTransactions = false;
 }

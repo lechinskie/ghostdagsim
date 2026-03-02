@@ -166,7 +166,6 @@ struct Blockchain {
 
   std::set<uint64_t> GetPast(uint64_t block_id);
   std::set<uint64_t> GetFuture(uint64_t block_id) const;
-  std::set<uint64_t> GetAnticone(uint64_t block_id, uint64_t other_block_id);
 
   std::set<uint64_t> CalculateBlueSet(uint64_t block_id);
   std::set<uint64_t> GreedyBlueSet(uint64_t block_id);

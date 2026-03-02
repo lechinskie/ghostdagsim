@@ -19,6 +19,8 @@
     "Distributed simulations need to run with NS3_MPI module, reconfigure and build your ns3 waf again pls"
 #endif
 
+#define METRICS_SCENARIO "run1"
+
 using namespace ns3;
 
 double GetWallTime();
@@ -124,6 +126,21 @@ int main(int argc, char *argv[]) {
 
   MetricsCollector::SetRank(systemId);
   MetricsCollector::SetVerbose(false);
+  MetricsCollector::SetTotalNodes(totalNoNodes);
+
+  SimulationConfig cfg;
+  cfg.lambda = lambda;
+  cfg.tau = tau;
+  cfg.tx_fee_lambda = txFeeLambda;
+  cfg.ghostdag_k = ghostdagK;
+  cfg.mempool_size = mempoolSize;
+  cfg.miners = noMiners;
+  cfg.scenario_name = METRICS_SCENARIO;
+  cfg.sim_duration_minutes = stop;
+  cfg.total_nodes = totalNoNodes;
+  cfg.tx_gen_interval = txGenInterval;
+  cfg.txs_per_block = txsPerBlock;
+  MetricsCollector::SetConfig(cfg);
 
   if (systemId == 0) {
     std::cout << "\n=== GHOSTDAG Network Simulator ===\n";
@@ -228,7 +245,7 @@ int main(int argc, char *argv[]) {
   Simulator::Destroy();
 
   MetricsCollector::PrintSummary();
-  MetricsCollector::Dump("results/run1");
+  MetricsCollector::Dump("results/" METRICS_SCENARIO);
 
   MpiInterface::Disable();
 

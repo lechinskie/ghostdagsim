@@ -385,7 +385,7 @@ void MetricsCollector::PrintSummary() {
   std::cout << "╔══════════════════════════════════════════════════════╗\n";
   std::cout << "║        GHOSTDAG Simulation Metrics Summary           ║\n";
   std::cout << "║                     rank " << std::setw(2) << s_rank
-            << "                           ║\n";
+            << "                          ║\n";
   if (s_hasConfig) {
     std::cout << "║  scenario: " << std::left << std::setw(42)
               << s_config.scenario_name << "║\n";
