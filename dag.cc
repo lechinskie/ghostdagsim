@@ -135,14 +135,17 @@ std::set<uint64_t> Blockchain::GreedyBlueSet(uint64_t block_id) {
       merge_set.insert(b);
 
   // 4. Process merge set in topological order
-  for (uint64_t candidate : TopologicalSort(merge_set)) {
-    std::set<uint64_t> past_cand = GetPast(candidate);
+  std::map<uint64_t, std::set<uint64_t>> blue_pasts;
+  for (uint64_t b : blue)
+    blue_pasts[b] = GetPast(b);
 
+  for (uint64_t candidate : TopologicalSort(merge_set)) {
+    auto past_cand = GetPast(candidate);
     uint64_t anticone_blues = 0;
     for (uint64_t b : blue) {
-      bool b_is_anc = past_cand.count(b) > 0;
-      bool cand_is_anc = GetPast(b).count(candidate) > 0;
-      if (!b_is_anc && !cand_is_anc)
+      bool b_in_past_cand = past_cand.count(b);
+      bool cand_in_past_b = blue_pasts[b].count(candidate);
+      if (!b_in_past_cand && !cand_in_past_b)
         if (++anticone_blues > (uint64_t)ghostdag_k)
           break;
     }
