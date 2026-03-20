@@ -22,8 +22,8 @@ jobs:
 
     permissions:
       contents: read
-      packages: read
-      checks: write      # required by publish-unit-test-result-action to create check runs
+      packages: write
+      checks: write
 
     steps:
       - name: Checkout
@@ -39,81 +39,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build a dedicated test image that compiles ns-3 + ghostdagsim tests.
-      # The Dockerfile.test below is built inline via the heredoc bake approach;
-      # we write it to a temp file so the main Dockerfile stays untouched.
-      - name: Write Dockerfile.test
-        run: |
-          cat > Dockerfile.test << 'EOF'
-          ARG NS3_VERSION=3.46.1
-
-          # ── Stage 1: build ns-3 base (cached separately from scratch code) ──
-          FROM debian:bookworm-slim AS ns3-base
-
-          ARG NS3_VERSION
-
-          RUN apt-get update && apt-get install -y --no-install-recommends \
-              build-essential cmake g++ python3 \
-              libopenmpi-dev openmpi-bin \
-              libgtest-dev \
-              wget git bzip2 ca-certificates tar && \
-              rm -rf /var/lib/apt/lists/*
-
-          # Debian bookworm ships GTest sources only — build and install them
-          RUN cmake -S /usr/src/googletest -B /tmp/gtest-build \
-                    -DCMAKE_BUILD_TYPE=Release && \
-              cmake --build /tmp/gtest-build --parallel && \
-              cmake --install /tmp/gtest-build
-
-          WORKDIR /opt
-          RUN wget -q https://www.nsnam.org/release/ns-allinone-${NS3_VERSION}.tar.bz2 && \
-              tar xjf ns-allinone-${NS3_VERSION}.tar.bz2 && \
-              rm ns-allinone-${NS3_VERSION}.tar.bz2
-
-          WORKDIR /opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}
-
-          # Configure and compile ns-3 itself (no scratch yet — maximises cache hit)
-          RUN ./ns3 configure --build-profile=debug --enable-mpi \
-                -- -DGHOSTDAGSIM_METRICS=ON && \
-              ./ns3 build
-
-          # ── Stage 2: compile ghostdagsim + tests ──────────────────────────
-          FROM ns3-base AS builder
-
-          ARG NS3_VERSION
-
-          COPY . /opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}/scratch/ghostdagsim/
-
-          # Single configure that enables both the sim and the test executables,
-          # then build all targets in one pass.
-          RUN ./ns3 configure --build-profile=debug --enable-mpi \
-                -- -DGHOSTDAGSIM_METRICS=ON -DGHOSTDAGSIM_TESTS=ON && \
-              ./ns3 build ghostdagtest mempooltest
-
-          # ── Stage 3: minimal runtime image ───────────────────────────────
-          FROM debian:bookworm-slim
-
-          ARG NS3_VERSION
-
-          RUN apt-get update && apt-get install -y --no-install-recommends \
-              libopenmpi-dev openmpi-bin && \
-              rm -rf /var/lib/apt/lists/*
-
-          COPY --from=builder \
-              /opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}/build/scratch/ghostdagsim/ns${NS3_VERSION}-ghostdagtest-debug \
-              /usr/local/bin/ghostdagtest
-
-          COPY --from=builder \
-              /opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}/build/scratch/ghostdagsim/ns${NS3_VERSION}-mempooltest-debug \
-              /usr/local/bin/mempooltest
-
-          COPY --from=builder \
-              /opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}/build/lib/ \
-              /usr/local/lib/ns3/
-
-          ENV LD_LIBRARY_PATH=/usr/local/lib/ns3
-          EOF
-
       - name: Build test image
         uses: docker/build-push-action@v6
         with:
@@ -127,35 +52,35 @@ jobs:
           cache-to: |
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:test-builder,mode=max
 
+
       - name: Run ghostdagtest
         run: |
-          docker run --rm ghostdagsim-test:ci \
+          docker run --rm \
+            -v ${{ github.workspace }}/results:/results \
+            ghostdagsim-test:ci \
             /usr/local/bin/ghostdagtest \
-            --gtest_output=xml:/tmp/ghostdagtest-results.xml || EXIT_CODE=$?
-          docker cp $(docker create ghostdagsim-test:ci):/tmp/ghostdagtest-results.xml \
-            ./ghostdagtest-results.xml 2>/dev/null || true
-          exit ${EXIT_CODE:-0}
+            --gtest_output=xml:/results/ghostdagtest-results.xml
 
-      - name: Run mempooltest
+
+      - name: Run ghostdagtest
         run: |
-          docker run --rm ghostdagsim-test:ci \
+          docker run --rm \
+            -v ${{ github.workspace }}/results:/results \
+            ghostdagsim-test:ci \
             /usr/local/bin/mempooltest \
-            --gtest_output=xml:/tmp/mempooltest-results.xml || EXIT_CODE=$?
-          docker cp $(docker create ghostdagsim-test:ci):/tmp/mempooltest-results.xml \
-            ./mempooltest-results.xml 2>/dev/null || true
-          exit ${EXIT_CODE:-0}
+            --gtest_output=xml:/results/mempooltest-results.xml
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ github.run_id }}
-          path: "*-results.xml"
+          path: "results/*-results.xml"
           retention-days: 14
 
       - name: Publish test summary
         if: always()
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
-          files: "*-results.xml"
+          files: "results/*-results.xml"
           check_name: "GhostDAG Unit Tests"
