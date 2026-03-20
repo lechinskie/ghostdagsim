@@ -23,6 +23,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      checks: write      # required by publish-unit-test-result-action to create check runs
 
     steps:
       - name: Checkout
