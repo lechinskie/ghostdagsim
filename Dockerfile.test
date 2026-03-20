@@ -1,0 +1,54 @@
+ARG NS3_VERSION=3.46.1
+
+FROM debian:bookworm-slim AS ns3-base
+
+ARG NS3_VERSION
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+			build-essential cmake g++ python3 \
+			libopenmpi-dev openmpi-bin \
+			libgtest-dev \
+			wget git bzip2 ca-certificates tar && \
+			rm -rf /var/lib/apt/lists/*
+
+RUN cmake -S /usr/src/googletest -B /tmp/gtest-build \
+-DCMAKE_BUILD_TYPE=Release && \
+cmake --build /tmp/gtest-build --parallel && \
+cmake --install /tmp/gtest-build
+
+WORKDIR /opt
+RUN wget -q https://www.nsnam.org/release/ns-allinone-${NS3_VERSION}.tar.bz2 && \
+tar xjf ns-allinone-${NS3_VERSION}.tar.bz2 && \
+rm ns-allinone-${NS3_VERSION}.tar.bz2
+
+WORKDIR /opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}
+
+
+RUN ./ns3 configure --enable-mpi -- -DGHOSTDAGSIM_TESTS=ON && \
+    ./ns3 build
+
+COPY . /opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}/scratch/ghostdagsim/
+RUN ./ns3 build ghostdagtest mempooltest
+
+FROM debian:bookworm-slim
+
+ARG NS3_VERSION
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libopenmpi-dev openmpi-bin && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=ns3-base \
+/opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}/build/scratch/ghostdagsim/ns${NS3_VERSION}-ghostdagtest-default \
+/usr/local/bin/ghostdagtest
+
+COPY --from=ns3-base \
+/opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}/build/scratch/ghostdagsim/ns${NS3_VERSION}-mempooltest-default \
+/usr/local/bin/mempooltest
+
+COPY --from=ns3-base \
+/opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}/build/lib/ \
+/usr/local/lib/ns3/
+
+ENV LD_LIBRARY_PATH=/usr/local/lib/ns3
+
