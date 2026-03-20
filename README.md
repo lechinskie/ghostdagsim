@@ -1,0 +1,109 @@
+
+# GhostDAG Simulator
+
+A network simulator for studying efficient propagation in P2P blockchain networks with DAG (Directed Acyclic Graph) structure. Built on top of ns-3 with MPI support for distributed simulation.
+
+## Overview
+
+This project simulates the GHOSTDAG consensus protocol, which extends traditional blockchain by allowing parallel blocks while maintaining a consistent ordering through a DAG structure (See [Phantom Ghostdag](https://dl.acm.org/doi/pdf/10.1145/3479722.3480990)). The simulator enables researchers to analyze network propagation characteristics, block dissemination patterns, and consensus performance under various network conditions.
+
+Based on [Bitcoin-Simulator by Arthur Gervais](https://github.com/arthurgervais/Bitcoin-Simulator) with custom GHOSTDAG consensus implementation and transaction propagation handling.
+
+## Features
+
+- **GHOSTDAG Consensus**: Full implementation of the GHOSTDAG ordering algorithm with blue/red block classification
+- **Distributed Simulation**: MPI-based parallel simulation for scalability
+- **Realistic Network Topology**: Geographic node distribution with regional latency modeling (based on bitcoin real topology by Arthur Gervais work)
+- **Transaction Propagation**: Inv-based transaction dissemination with batching
+- **Block Propagation**: Multi-parent block relay with bandwidth-aware handling
+
+## Requirements
+
+- ns-3.46+ with MPI support
+- CMake 3.10+
+- MPI implementation (Open MPI or similar)
+- C++17 compatible compiler
+
+## Quick Start
+
+```bash
+# Build with ns3 waf
+./ns3 configure --enable-mpi -- -DGHOSTDAGSIM_METRICS=ON #if you want metrics to be build with
+./ns3 build ghostdagsim
+
+# Run simulation
+./ns3 run ghostdagsim -- <flags>
+
+# Run with MPI
+./ns3 run --command-template "mpirun -np <number of mpi threads> %s" ghostdagsim -- <flags>
+```
+
+You can also build and run with docker
+```bash
+docker build -t ghostdagsim .
+
+docker run [-v $(pwd)/results:/results] [-e MPI_THREADS=4] ghostdagsim -- <flags>
+#          ^ Optional results folder    ^ Optional (Default 1)
+```
+
+## Configuration
+
+Key simulation parameters (see `main.cc` for full list):
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `--nodes` | Total number of nodes | 10 |
+| `--miners` | Number of mining nodes | 10 |
+| `--k` | GHOSTDAG k parameter | 10 |
+| `--lambda` | Mean block interval (seconds) | 20 |
+| `--tau` | Propagation delay multiplier | 1.0 |
+| `--txs_per_block` | Transactions per block | 100 |
+| `--blocks_per_miner` | Target blocks per miner | 1000 |
+
+## Output
+
+Simulation results are written to `results/<run name>/<mpi rank>` including:
+- Block mining and reception events
+- DAG snapshots and coloring
+- Transaction propagation metrics
+- Network message traces
+- Configuration summary
+
+## Project Structure
+
+```
+ghostdagsim/
+├── main.cc          # Simulation entry point and configuration
+├── node.{cc,h}      # Node application and network handling
+├── dag.{cc,h}       # GHOSTDAG consensus implementation
+├── miner.{cc,h}     # Mining node functionality
+├── mempool.{cc,h}   # Transaction mempool management
+├── metrics.{cc,h}   # Metrics collection and output
+├── helpers/         # Topology and network helpers
+└── tests/           # Unit tests
+```
+
+## Contributing
+
+Feel completely free to send me an email (eduardo_ramos@edu.univali.br) asking questions about the project. Any contribution researching and implementing new algorithms and methods are welcome.
+
+Here are some additions that i find interesting:
+  - Test network stress under different topologies
+  - A modular system for accept different consensus under same network propagation conditions for research behavior on multiple consensus protocols
+  - A plugin system on message handler/sender for research more methods on propagation
+  - Generalized metrics in consensus protocol also
+
+
+For run tests you can just use ns3 as well:
+> [!WARNING]
+> Be sure to have GTest installed
+
+```bash
+# tests are ns3 scratchs that use the structures and asserts with gtest
+./ns3 run <testname>
+```
+
+
+## License
+
+Academic project for research purposes.
