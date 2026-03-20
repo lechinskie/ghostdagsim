@@ -9,6 +9,13 @@
 #include <vector>
 
 #define NOW ns3::Simulator::Now().GetSeconds()
+#define NID (GetNode()->GetId())
+#define IPV4_STR(from)                                                         \
+  ([&]() {                                                                     \
+    std::stringstream ss;                                                      \
+    InetSocketAddress::ConvertFrom(from).GetIpv4().Print(ss);                  \
+    return ss.str();                                                           \
+  }())
 
 typedef struct {
   double download_speed;
