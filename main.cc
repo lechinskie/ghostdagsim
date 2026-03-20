@@ -19,7 +19,7 @@
     "Distributed simulations need to run with NS3_MPI module, reconfigure and build your ns3 waf again pls"
 #endif
 
-#define METRICS_SCENARIO "run1"
+#define METRICS_SCENARIO "run0"
 
 using namespace ns3;
 
@@ -125,7 +125,8 @@ int main(int argc, char *argv[]) {
   uint32_t systemCount = MpiInterface::GetSize();
 
   MetricsCollector::SetRank(systemId);
-  MetricsCollector::SetVerbose(false);
+  MetricsCollector::SetOutputDir("results/" METRICS_SCENARIO);
+  MetricsCollector::SetImmediate(true);
   MetricsCollector::SetTotalNodes(totalNoNodes);
 
   SimulationConfig cfg;
@@ -245,7 +246,7 @@ int main(int argc, char *argv[]) {
   Simulator::Destroy();
 
   MetricsCollector::PrintSummary();
-  MetricsCollector::Dump("results/" METRICS_SCENARIO);
+  MetricsCollector::Dump();
 
   MpiInterface::Disable();
 

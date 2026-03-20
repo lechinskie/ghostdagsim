@@ -65,7 +65,7 @@ struct DagSnapshotEvent {
 struct RedundantMsgEvent {
   double sim_time;
   uint32_t node_id;
-  uint64_t block_id;
+  uint64_t item_id;
   std::string msg_type;
   std::string from_ip;
   uint64_t bytes;
@@ -76,9 +76,8 @@ struct MsgEvent {
   uint32_t node_id;
   uint64_t item_id;
   std::string msg_type;
-  std::string peer_ip;
+  std::string from_ip;
   uint64_t bytes;
-  bool is_send;
 };
 
 struct TxGeneratedEvent {
@@ -141,8 +140,8 @@ struct SimulationConfig {
 class MetricsCollector {
 public:
   static void SetRank(uint32_t rank);
-  static void SetVerbose(bool verbose);
   static void SetTotalNodes(uint32_t total);
+  static void SetImmediate(bool imm);
   static void SetConfig(const SimulationConfig &config);
 
   static void RecordBlockMined(uint32_t miner_id, uint64_t block_id,
@@ -173,13 +172,13 @@ public:
                                 uint64_t orphan_blocks, uint64_t dag_width,
                                 double sim_time);
 
-  static void RecordRedundantMsg(uint32_t node_id, uint64_t block_id,
+  static void RecordRedundantMsg(uint32_t node_id, uint64_t item_id,
                                  std::string msg_type, std::string from_ip,
                                  uint64_t bytes, double sim_time);
 
   static void RecordMsg(uint32_t node_id, uint64_t item_id,
-                        std::string msg_type, std::string peer_ip,
-                        uint64_t bytes, bool is_send, double sim_time);
+                        std::string msg_type, std::string from_ip,
+                        uint64_t bytes, double sim_time);
 
   static void RecordTxGenerated(uint32_t node_id, uint64_t tx_id, uint32_t fee,
                                 double sim_time);
@@ -200,9 +199,12 @@ public:
                                           double creation_time,
                                           double sim_time);
 
-  static void Dump(const std::string &output_dir);
+  static void Dump();
   static void PrintSummary();
   static void Reset();
+  static void SetOutputDir(const std::string &dir);
+  static std::ofstream &GetOrOpenFile(const std::string &name,
+                                      const std::string &header);
 
 private:
   static void DumpBlocksMined(const std::string &path);
@@ -222,11 +224,13 @@ private:
 
   static std::string FilePath(const std::string &dir, const std::string &name);
 
+  static std::string s_outputDir;
+  static std::map<std::string, std::ofstream> s_fileHandles;
   static uint32_t s_rank;
-  static bool s_verbose;
   static uint32_t s_totalNodes;
   static SimulationConfig s_config;
   static bool s_hasConfig;
+  static bool s_immediate;
 
   static std::vector<BlockMinedEvent> s_blocksMined;
   static std::vector<BlockReceivedEvent> s_blocksReceived;
@@ -266,11 +270,11 @@ private:
 #define METRIC_DAG_SNAPSHOT(nid, total, blue, red, orph, width, t)             \
   MetricsCollector::RecordDagSnapshot(nid, total, blue, red, orph, width, t)
 
-#define METRIC_REDUNDANT_MSG(nid, bid, mtype, ip, bytes, t)                    \
-  MetricsCollector::RecordRedundantMsg(nid, bid, mtype, ip, bytes, t)
+#define METRIC_REDUNDANT_MSG(nid, iid, mtype, ip, bytes, t)                    \
+  MetricsCollector::RecordRedundantMsg(nid, iid, mtype, ip, bytes, t)
 
-#define METRIC_MSG(nid, iid, mtype, ip, bytes, is_send, t)                     \
-  MetricsCollector::RecordMsg(nid, iid, mtype, ip, bytes, is_send, t)
+#define METRIC_MSG(nid, iid, mtype, ip, bytes, t)                              \
+  MetricsCollector::RecordMsg(nid, iid, mtype, ip, bytes, t)
 
 #define METRIC_TX_GENERATED(nid, txid, fee, t)                                 \
   MetricsCollector::RecordTxGenerated(nid, txid, fee, t)
