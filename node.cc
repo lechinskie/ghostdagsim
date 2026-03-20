@@ -531,6 +531,11 @@ void GhostDagNode::InvTimeoutExpired(std::string block_hash) {
   it->second.erase(it->second.begin());
 
   if (!it->second.empty()) {
+    std::uniform_int_distribution<size_t> pick(0, it->second.size() - 1);
+    size_t idx = pick(m_generator);
+    if (idx != 0)
+      std::swap(it->second[0], it->second[idx]);
+
     Address next = it->second.front();
 
     nlohmann::json req;
@@ -726,6 +731,10 @@ void GhostDagNode::InvTxTimeoutExpired(std::string tx_hash) {
   it->second.erase(it->second.begin());
 
   if (!it->second.empty()) {
+    std::uniform_int_distribution<size_t> pick(0, it->second.size() - 1);
+    size_t idx = pick(m_generator);
+    if (idx != 0)
+      std::swap(it->second[0], it->second[idx]);
     Address next = it->second.front();
 
     nlohmann::json req;
