@@ -10,11 +10,14 @@
 #include <sys/stat.h>
 
 uint32_t MetricsCollector::s_rank = 0;
-bool MetricsCollector::s_verbose = false;
 uint32_t MetricsCollector::s_totalNodes = 0;
 bool MetricsCollector::s_hasConfig = false;
+bool MetricsCollector::s_immediate = false;
+std::string MetricsCollector::s_outputDir;
 
 SimulationConfig MetricsCollector::s_config{};
+
+std::map<std::string, std::ofstream> MetricsCollector::s_fileHandles;
 
 std::vector<BlockMinedEvent> MetricsCollector::s_blocksMined;
 std::vector<BlockReceivedEvent> MetricsCollector::s_blocksReceived;
@@ -34,12 +37,35 @@ std::map<uint64_t, std::set<uint32_t>> MetricsCollector::s_blockReceivers;
 std::map<uint64_t, double> MetricsCollector::s_orphanedAt;
 
 void MetricsCollector::SetRank(uint32_t rank) { s_rank = rank; }
-void MetricsCollector::SetVerbose(bool verbose) { s_verbose = verbose; }
 void MetricsCollector::SetTotalNodes(uint32_t total) { s_totalNodes = total; }
-
+void MetricsCollector::SetImmediate(bool imm) { s_immediate = imm; }
+void MetricsCollector::SetOutputDir(const std::string &dir) {
+  std::error_code ec;
+  std::filesystem::create_directories(dir, ec);
+  s_outputDir = dir;
+}
 void MetricsCollector::SetConfig(const SimulationConfig &config) {
   s_config = config;
   s_hasConfig = true;
+}
+
+std::ofstream &MetricsCollector::GetOrOpenFile(const std::string &name,
+                                               const std::string &header) {
+  auto it = s_fileHandles.find(name);
+  if (it == s_fileHandles.end()) {
+    std::string path = FilePath(s_outputDir, name);
+    std::ofstream f(path, std::ios::out | std::ios::trunc);
+    if (!f.is_open())
+      std::cerr << "[Metrics] WARNING: could not open " << path << "\n";
+    f << header << "\n";
+    s_fileHandles.emplace(name, std::move(f));
+  }
+  return s_fileHandles[name];
+}
+
+std::string MetricsCollector::FilePath(const std::string &dir,
+                                       const std::string &name) {
+  return dir + "/rank" + std::to_string(s_rank) + "_" + name + ".csv";
 }
 
 void MetricsCollector::RecordBlockMined(uint32_t miner_id, uint64_t block_id,
@@ -47,14 +73,20 @@ void MetricsCollector::RecordBlockMined(uint32_t miner_id, uint64_t block_id,
                                         uint64_t dag_width, uint32_t num_txs,
                                         uint32_t block_size_bytes,
                                         double sim_time) {
-  s_blocksMined.push_back({sim_time, miner_id, block_id, num_parents, dag_width,
-                           num_txs, block_size_bytes});
   s_blockReceivers[block_id].insert(miner_id);
-  if (s_verbose)
-    std::cout << "[METRIC] BLOCK_MINED     t=" << sim_time
-              << " miner=" << miner_id << " block=" << block_id
-              << " parents=" << num_parents << " width=" << dag_width
-              << " txs=" << num_txs << "\n";
+
+  if (s_immediate) {
+    auto &f =
+        GetOrOpenFile("blocks_mined", "sim_time,miner_id,block_id,num_parents,"
+                                      "dag_width,num_txs,block_size_bytes");
+    f << sim_time << "," << miner_id << "," << block_id << "," << num_parents
+      << "," << dag_width << "," << num_txs << "," << block_size_bytes << "\n";
+    // flush every write so data survives a crash
+    f.flush();
+  } else {
+    s_blocksMined.push_back({sim_time, miner_id, block_id, num_parents,
+                             dag_width, num_txs, block_size_bytes});
+  }
 }
 
 void MetricsCollector::RecordBlockReceived(uint32_t node_id, uint64_t block_id,
@@ -63,24 +95,41 @@ void MetricsCollector::RecordBlockReceived(uint32_t node_id, uint64_t block_id,
                                            double sim_time, std::string from_ip,
                                            bool was_requested) {
   double delay = sim_time - creation_time;
-  s_blocksReceived.push_back({sim_time, node_id, block_id, miner_id,
-                              creation_time, delay, from_ip, was_requested});
   s_blockReceivers[block_id].insert(node_id);
-  if (s_verbose)
-    std::cout << "[METRIC] BLOCK_RECEIVED  t=" << sim_time
-              << " node=" << node_id << " block=" << block_id
-              << " delay=" << delay << "s from=" << from_ip << "\n";
+
+  if (s_immediate) {
+    auto &f = GetOrOpenFile("blocks_received",
+                            "sim_time,node_id,block_id,miner_id,creation_time,"
+                            "propagation_delay_s,from_ip,was_requested");
+    f << sim_time << "," << node_id << "," << block_id << "," << miner_id << ","
+      << creation_time << "," << delay << "," << from_ip << ","
+      << (was_requested ? 1 : 0) << "\n";
+    f.flush();
+  } else {
+    s_blocksReceived.push_back({sim_time, node_id, block_id, miner_id,
+                                creation_time, delay, from_ip, was_requested});
+  }
 }
 
 void MetricsCollector::RecordBlockOrphaned(
     uint32_t node_id, uint64_t block_id,
     const std::vector<uint64_t> &missing_parent_ids, double sim_time) {
-  s_blocksOrphaned.push_back({sim_time, node_id, block_id, missing_parent_ids});
   s_orphanedAt[block_id] = sim_time;
-  if (s_verbose) {
-    std::cout << "[METRIC] BLOCK_ORPHANED  t=" << sim_time
-              << " node=" << node_id << " block=" << block_id
-              << " missing=" << missing_parent_ids.size() << " parents\n";
+
+  if (s_immediate) {
+    auto &f = GetOrOpenFile("blocks_orphaned",
+                            "sim_time,node_id,block_id,missing_parent_ids");
+    f << sim_time << "," << node_id << "," << block_id << ",\"";
+    for (size_t i = 0; i < missing_parent_ids.size(); ++i) {
+      if (i > 0)
+        f << ";";
+      f << missing_parent_ids[i];
+    }
+    f << "\"\n";
+    f.flush();
+  } else {
+    s_blocksOrphaned.push_back(
+        {sim_time, node_id, block_id, missing_parent_ids});
   }
 }
 
@@ -93,11 +142,16 @@ void MetricsCollector::RecordBlockUnorphaned(uint32_t node_id,
     duration = sim_time - it->second;
     s_orphanedAt.erase(it);
   }
-  s_blocksUnorphaned.push_back({sim_time, node_id, block_id, duration});
-  if (s_verbose)
-    std::cout << "[METRIC] BLOCK_UNORPHANED t=" << sim_time
-              << " node=" << node_id << " block=" << block_id
-              << " duration=" << duration << "s\n";
+
+  if (s_immediate) {
+    auto &f = GetOrOpenFile("blocks_unorphaned",
+                            "sim_time,node_id,block_id,orphan_duration_s");
+    f << sim_time << "," << node_id << "," << block_id << "," << duration
+      << "\n";
+    f.flush();
+  } else {
+    s_blocksUnorphaned.push_back({sim_time, node_id, block_id, duration});
+  }
 }
 
 void MetricsCollector::RecordBlockColored(uint32_t node_id, uint64_t block_id,
@@ -105,12 +159,18 @@ void MetricsCollector::RecordBlockColored(uint32_t node_id, uint64_t block_id,
                                           uint64_t blue_set_size,
                                           uint64_t selected_parent,
                                           double sim_time) {
-  s_blocksColored.push_back({sim_time, node_id, block_id, is_blue, blue_score,
-                             blue_set_size, selected_parent});
-  if (s_verbose)
-    std::cout << "[METRIC] BLOCK_COLORED   t=" << sim_time
-              << " node=" << node_id << " block=" << block_id
-              << " blue=" << is_blue << " score=" << blue_score << "\n";
+  if (s_immediate) {
+    auto &f = GetOrOpenFile("blocks_colored",
+                            "sim_time,node_id,block_id,is_blue,blue_score,blue_"
+                            "set_size,selected_parent");
+    f << sim_time << "," << node_id << "," << block_id << ","
+      << (is_blue ? 1 : 0) << "," << blue_score << "," << blue_set_size << ","
+      << selected_parent << "\n";
+    f.flush();
+  } else {
+    s_blocksColored.push_back({sim_time, node_id, block_id, is_blue, blue_score,
+                               blue_set_size, selected_parent});
+  }
 }
 
 void MetricsCollector::RecordDagSnapshot(uint32_t node_id,
@@ -122,79 +182,104 @@ void MetricsCollector::RecordDagSnapshot(uint32_t node_id,
   double ratio = total_blocks > 0 ? static_cast<double>(blue_blocks) /
                                         static_cast<double>(total_blocks)
                                   : 0.0;
-  s_dagSnapshots.push_back({sim_time, node_id, total_blocks, blue_blocks,
-                            red_blocks, orphan_blocks, dag_width, ratio});
-  if (s_verbose)
-    std::cout << "[METRIC] DAG_SNAPSHOT    t=" << sim_time
-              << " node=" << node_id << " total=" << total_blocks
-              << " blue=" << blue_blocks << " ratio=" << ratio
-              << " width=" << dag_width << "\n";
+
+  if (s_immediate) {
+    auto &f = GetOrOpenFile(
+        "dag_snapshots", "sim_time,node_id,total_blocks,blue_blocks,red_blocks,"
+                         "orphan_blocks,dag_width,blue_ratio");
+    f << sim_time << "," << node_id << "," << total_blocks << "," << blue_blocks
+      << "," << red_blocks << "," << orphan_blocks << "," << dag_width << ","
+      << ratio << "\n";
+    f.flush();
+  } else {
+    s_dagSnapshots.push_back({sim_time, node_id, total_blocks, blue_blocks,
+                              red_blocks, orphan_blocks, dag_width, ratio});
+  }
 }
 
-void MetricsCollector::RecordRedundantMsg(uint32_t node_id, uint64_t block_id,
+void MetricsCollector::RecordRedundantMsg(uint32_t node_id, uint64_t item_id,
                                           std::string msg_type,
                                           std::string from_ip, uint64_t bytes,
                                           double sim_time) {
-  s_redundantMsgs.push_back(
-      {sim_time, node_id, block_id, msg_type, from_ip, bytes});
-  if (s_verbose)
-    std::cout << "[METRIC] REDUNDANT_MSG   t=" << sim_time
-              << " node=" << node_id << " block=" << block_id
-              << " type=" << msg_type << " bytes=" << bytes
-              << " from=" << from_ip << "\n";
+  if (s_immediate) {
+    auto &f = GetOrOpenFile("redundant_msgs",
+                            "sim_time,node_id,item_id,msg_type,from_ip,bytes");
+    f << sim_time << "," << node_id << "," << item_id << "," << msg_type << ","
+      << from_ip << "," << bytes << "\n";
+    f.flush();
+  } else {
+    s_redundantMsgs.push_back(
+        {sim_time, node_id, item_id, msg_type, from_ip, bytes});
+  }
 }
 
 void MetricsCollector::RecordMsg(uint32_t node_id, uint64_t item_id,
-                                 std::string msg_type, std::string peer_ip,
-                                 uint64_t bytes, bool is_send,
-                                 double sim_time) {
-  s_msgs.push_back(
-      {sim_time, node_id, item_id, msg_type, peer_ip, bytes, is_send});
-  if (s_verbose)
-    std::cout << "[METRIC] MSG             t=" << sim_time
-              << " node=" << node_id << " " << (is_send ? "SEND" : "RECV")
-              << " type=" << msg_type << " bytes=" << bytes
-              << " peer=" << peer_ip << "\n";
+                                 std::string msg_type, std::string from_ip,
+                                 uint64_t bytes, double sim_time) {
+  if (s_immediate) {
+    auto &f = GetOrOpenFile(
+        "msgs", "sim_time,node_id,item_id,msg_type,peer_ip,bytes,direction");
+    f << sim_time << "," << node_id << "," << item_id << "," << msg_type << ","
+      << from_ip << "," << bytes << ",\n";
+    f.flush();
+  } else {
+    s_msgs.push_back({sim_time, node_id, item_id, msg_type, from_ip, bytes});
+  }
 }
 
 void MetricsCollector::RecordTxGenerated(uint32_t node_id, uint64_t tx_id,
                                          uint32_t fee, double sim_time) {
-  s_txsGenerated.push_back({sim_time, node_id, tx_id, fee});
-  if (s_verbose)
-    std::cout << "[METRIC] TX_GENERATED    t=" << sim_time
-              << " node=" << node_id << " tx=" << tx_id << " fee=" << fee
-              << "\n";
+  if (s_immediate) {
+    auto &f = GetOrOpenFile("txs_generated", "sim_time,node_id,tx_id,fee");
+    f << sim_time << "," << node_id << "," << tx_id << "," << fee << "\n";
+    f.flush();
+  } else {
+    s_txsGenerated.push_back({sim_time, node_id, tx_id, fee});
+  }
 }
 
 void MetricsCollector::RecordTxReceived(uint32_t node_id, uint64_t tx_id,
                                         uint32_t fee, double propagation_delay,
                                         std::string from_ip, double sim_time) {
-  s_txsReceived.push_back(
-      {sim_time, node_id, tx_id, fee, propagation_delay, from_ip});
-  if (s_verbose)
-    std::cout << "[METRIC] TX_RECEIVED     t=" << sim_time
-              << " node=" << node_id << " tx=" << tx_id
-              << " delay=" << propagation_delay << "s\n";
+  if (s_immediate) {
+    auto &f =
+        GetOrOpenFile("txs_received",
+                      "sim_time,node_id,tx_id,fee,propagation_delay_s,from_ip");
+    f << sim_time << "," << node_id << "," << tx_id << "," << fee << ","
+      << propagation_delay << "," << from_ip << "\n";
+    f.flush();
+  } else {
+    s_txsReceived.push_back(
+        {sim_time, node_id, tx_id, fee, propagation_delay, from_ip});
+  }
 }
 
 void MetricsCollector::RecordTxConfirmed(uint32_t miner_id, uint64_t tx_id,
                                          uint64_t block_id, uint32_t fee,
                                          double sim_time) {
-  s_txsConfirmed.push_back({sim_time, miner_id, tx_id, block_id, fee});
-  if (s_verbose)
-    std::cout << "[METRIC] TX_CONFIRMED    t=" << sim_time
-              << " miner=" << miner_id << " tx=" << tx_id
-              << " block=" << block_id << "\n";
+  if (s_immediate) {
+    auto &f =
+        GetOrOpenFile("txs_confirmed", "sim_time,miner_id,tx_id,block_id,fee");
+    f << sim_time << "," << miner_id << "," << tx_id << "," << block_id << ","
+      << fee << "\n";
+    f.flush();
+  } else {
+    s_txsConfirmed.push_back({sim_time, miner_id, tx_id, block_id, fee});
+  }
 }
 
 void MetricsCollector::RecordInvSent(uint32_t node_id, std::string to_ip,
                                      std::string inv_type, uint64_t item_id,
                                      uint64_t bytes, double sim_time) {
-  s_invsSent.push_back({sim_time, node_id, to_ip, inv_type, item_id, bytes});
-  if (s_verbose)
-    std::cout << "[METRIC] INV_SENT        t=" << sim_time
-              << " node=" << node_id << " to=" << to_ip << " type=" << inv_type
-              << " id=" << item_id << " bytes=" << bytes << "\n";
+  if (s_immediate) {
+    auto &f = GetOrOpenFile("invs_sent",
+                            "sim_time,node_id,to_ip,inv_type,item_id,bytes");
+    f << sim_time << "," << node_id << "," << to_ip << "," << inv_type << ","
+      << item_id << "," << bytes << "\n";
+    f.flush();
+  } else {
+    s_invsSent.push_back({sim_time, node_id, to_ip, inv_type, item_id, bytes});
+  }
 }
 
 void MetricsCollector::RecordBlockCoverageSnapshot(uint64_t block_id,
@@ -204,18 +289,18 @@ void MetricsCollector::RecordBlockCoverageSnapshot(uint64_t block_id,
   uint32_t total = s_totalNodes > 0 ? s_totalNodes : reached;
   double ratio = total > 0 ? static_cast<double>(reached) / total : 0.0;
   double elapsed = sim_time - creation_time;
-  s_blockCoverage.push_back(
-      {sim_time, block_id, creation_time, elapsed, reached, total, ratio});
-  if (s_verbose)
-    std::cout << "[METRIC] BLOCK_COVERAGE  t=" << sim_time
-              << " block=" << block_id << " reached=" << reached << "/" << total
-              << " (" << ratio * 100.0 << "%)"
-              << " elapsed=" << elapsed << "s\n";
-}
 
-std::string MetricsCollector::FilePath(const std::string &dir,
-                                       const std::string &name) {
-  return dir + "/rank" + std::to_string(s_rank) + "_" + name + ".csv";
+  if (s_immediate) {
+    auto &f = GetOrOpenFile("block_coverage",
+                            "sim_time,block_id,block_creation_time,elapsed_s,"
+                            "nodes_reached,total_nodes,coverage_ratio");
+    f << sim_time << "," << block_id << "," << creation_time << "," << elapsed
+      << "," << reached << "," << total << "," << ratio << "\n";
+    f.flush();
+  } else {
+    s_blockCoverage.push_back(
+        {sim_time, block_id, creation_time, elapsed, reached, total, ratio});
+  }
 }
 
 void MetricsCollector::DumpBlocksMined(const std::string &path) {
@@ -282,10 +367,10 @@ void MetricsCollector::DumpDagSnapshots(const std::string &path) {
 
 void MetricsCollector::DumpRedundantMsgs(const std::string &path) {
   std::ofstream f(path);
-  f << "sim_time,node_id,block_id,msg_type,from_ip,bytes\n";
+  f << "sim_time,node_id,item_id,msg_type,from_ip,bytes\n";
   for (const auto &e : s_redundantMsgs)
-    f << e.sim_time << "," << e.node_id << "," << e.block_id << ","
-      << e.msg_type << "," << e.from_ip << "," << e.bytes << "\n";
+    f << e.sim_time << "," << e.node_id << "," << e.item_id << "," << e.msg_type
+      << "," << e.from_ip << "," << e.bytes << "\n";
 }
 
 void MetricsCollector::DumpMsgs(const std::string &path) {
@@ -293,8 +378,7 @@ void MetricsCollector::DumpMsgs(const std::string &path) {
   f << "sim_time,node_id,item_id,msg_type,peer_ip,bytes,direction\n";
   for (const auto &e : s_msgs)
     f << e.sim_time << "," << e.node_id << "," << e.item_id << "," << e.msg_type
-      << "," << e.peer_ip << "," << e.bytes << ","
-      << (e.is_send ? "send" : "recv") << "\n";
+      << "," << e.from_ip << "," << e.bytes << ",\n";
 }
 
 void MetricsCollector::DumpTxsGenerated(const std::string &path) {
@@ -355,7 +439,20 @@ void MetricsCollector::DumpConfig(const std::string &path) {
   f << "sim_duration_min," << s_config.sim_duration_minutes << "\n";
 }
 
-void MetricsCollector::Dump(const std::string &output_dir) {
+void MetricsCollector::Dump() {
+  const std::string output_dir = s_outputDir;
+  if (s_immediate) {
+    for (auto &[name, f] : s_fileHandles)
+      f.close();
+    s_fileHandles.clear();
+    if (s_hasConfig)
+      DumpConfig(FilePath(output_dir, "config"));
+    std::cout << "[Metrics] rank=" << s_rank
+              << " immediate mode: CSVs already written to " << output_dir
+              << "/\n";
+    return;
+  }
+
   std::error_code ec;
   std::filesystem::create_directories(output_dir, ec);
 
@@ -508,20 +605,19 @@ void MetricsCollector::PrintSummary() {
   }
 
   std::cout << "\n── Network Redundancy & Bandwidth ───────────────────\n";
-  uint64_t total_bytes_sent = 0;
+  uint64_t total_bytes_recv = 0;
   uint64_t redundant_bytes = 0;
   for (const auto &e : s_msgs)
-    if (e.is_send)
-      total_bytes_sent += e.bytes;
+    total_bytes_recv += e.bytes;
   for (const auto &e : s_redundantMsgs)
     redundant_bytes += e.bytes;
-  std::cout << "  Total bytes sent:          " << total_bytes_sent << "\n";
+  std::cout << "  Total bytes sent:          " << total_bytes_recv << "\n";
   std::cout << "  Redundant messages:        " << s_redundantMsgs.size()
             << "\n";
   std::cout << "  Redundant bytes:           " << redundant_bytes << "\n";
-  if (total_bytes_sent > 0) {
+  if (total_bytes_recv > 0) {
     std::cout << "  Redundancy ratio (bytes):  " << std::setprecision(4)
-              << static_cast<double>(redundant_bytes) / total_bytes_sent
+              << static_cast<double>(redundant_bytes) / total_bytes_recv
               << "\n";
   }
   if (!s_redundantMsgs.empty() && !s_blocksReceived.empty()) {
@@ -583,6 +679,10 @@ void MetricsCollector::PrintSummary() {
 }
 
 void MetricsCollector::Reset() {
+  for (auto &[name, f] : s_fileHandles)
+    f.close();
+  s_fileHandles.clear();
+
   s_blocksMined.clear();
   s_blocksReceived.clear();
   s_blocksOrphaned.clear();
