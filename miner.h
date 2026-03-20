@@ -1,6 +1,7 @@
 #pragma once
 
 #include "node.h"
+#include <cstdint>
 
 namespace ns3 {
 
@@ -27,7 +28,7 @@ protected:
   void ScheduleNextMiningEvent();
   void MineBlock();
 
-  std::set<Transaction> SelectTransactions();
+  std::set<Transaction> SelectTransactions(uint64_t bid);
 
   double m_blockGenInterval;
   EventId m_nextMiningEvent;
