@@ -15,7 +15,6 @@
 #include "ns3/uinteger.h"
 
 #include <cstdint>
-#include <fmt/format.h>
 #include <string>
 
 #define MSG_DELIMITER '#'
