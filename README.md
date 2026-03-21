@@ -96,7 +96,7 @@ Here are some additions that i find interesting:
 
 For run tests you can just use ns3 as well:
 > [!WARNING]
-> Be sure to have GTest installed
+> Be sure to have GTest installed and configured ns3 with -DGHOSTDAGSIM_TESTS=ON
 
 ```bash
 # tests are ns3 scratchs that use the structures and asserts with gtest
