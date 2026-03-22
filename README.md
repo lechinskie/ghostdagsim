@@ -89,9 +89,11 @@ Feel completely free to send me an email (eduardo_ramos@edu.univali.br) asking q
 
 Here are some additions that i find interesting:
   - Test network stress under different topologies
-  - A modular system for accept different consensus under same network propagation conditions for research behavior on multiple consensus protocols
+  - Forks changing consensus layer researching differences between network usage and efficiency of optimization techniques
   - A plugin system on message handler/sender for research more methods on propagation
-  - Generalized metrics in consensus protocol also
+  - Generalized metrics in consensus protocol
+  - Attacker modeling and tip selection strategies
+  - Network resilience and security metrics
 
 
 For run tests you can just use ns3 as well:
