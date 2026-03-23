@@ -1,3 +1,23 @@
+/**
+ * @file dag.h
+ * @brief Ghostdag consensus protocol definition and core structures
+ * @author Eduardo Ramos <eduardo_ramos@edu.univali.br>
+ * @date 2026
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation;
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+
 #pragma once
 
 #include "ns3/ipv4-address.h"
@@ -14,7 +34,7 @@
 #define IPV4_STR(from)                                                         \
   ([&]() {                                                                     \
     std::stringstream ss;                                                      \
-    InetSocketAddress::ConvertFrom(from).GetIpv4().Print(ss);                  \
+    InetSocketAddress::ConvertFrom((from)).GetIpv4().Print(ss);                \
     return ss.str();                                                           \
   }())
 
