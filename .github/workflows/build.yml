@@ -22,7 +22,7 @@ jobs:
 
     permissions:
       contents: read
-      packages: write   # needed to push the build cache to GHCR
+      packages: write
 
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
@@ -51,8 +51,6 @@ jobs:
             # branch builds get a sha label, not a published tag
             type=sha,prefix=sha-,format=short
 
-      # Build only (no push) to verify the image compiles correctly.
-      # The ns-3 builder stage is cached in GHCR so subsequent runs are fast.
       - name: Build (no push)
         id: build
         uses: docker/build-push-action@v6
@@ -63,12 +61,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: NS3_VERSION=${{ env.NS3_VERSION }}
-          # Reuse the heavy ns-3 compile layer from the registry cache
           cache-from: |
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:builder
-          # Write a warm cache back so publish jobs benefit from it
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:builder-amd64
           cache-to: |
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:builder,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:builder-amd64,mode=max
           provenance: false
 
       - name: Image size report

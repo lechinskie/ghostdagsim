@@ -97,11 +97,15 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: NS3_VERSION=${{ env.NS3_VERSION }}
-          # Reuse the warm builder cache written by the build workflow
+          # Per-platform cache keys — a single shared key causes the slower
+          # arm64 (QEMU-emulated) build to overwrite the amd64 cache on every
+          # run, leaving one platform always cold.
           cache-from: |
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:builder
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:builder-amd64
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:builder-arm64
           cache-to: |
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:builder,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:builder-amd64,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:builder-arm64,mode=max
           provenance: true
           sbom: true
 
