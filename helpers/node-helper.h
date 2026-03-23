@@ -1,14 +1,28 @@
-/*
- * This file is originally created for help create nodes for
- * [Bitcoin-Simulator](https://github.com/arthurgervais/Bitcoin-Simulator) by
- * Arthur Gervais Revised and Re-impl for ghostdag nodes and helpers by
- * Eramoss - <eduardo_ramos@edu.univali.br>
- * */
+/**
+ * @file node-helper.h
+ * @brief Node creation helper for P2P blockchain simulation
+ * @author Arthur Gervais (original Bitcoin-Simulator)
+ * @see https://github.com/arthurgervais/Bitcoin-Simulator
+ * @author Eduardo Ramos <eduardo_ramos@edu.univali.br> (GHOSTDAG adaptations)
+ * @date 2026
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation;
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
 
 #pragma once
 
 #include "../dag.h"
-#include "../metrics.h"
 
 #include "ns3/application-container.h"
 #include "ns3/ipv4-address.h"

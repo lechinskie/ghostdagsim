@@ -1,4 +1,11 @@
-/*
+/**
+ * @file node-topology-helper.cc
+ * @brief Netork topology helper for P2P blockchain simulation
+ * @author Josh Pelkey <jpelkey@gatech.edu> (original Bitcoin-Simulator)
+ * @see https://github.com/arthurgervais/Bitcoin-Simulator
+ * @author Eduardo Ramos <eduardo_ramos@edu.univali.br> (GHOSTDAG adaptations)
+ * @date 2026
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation;
@@ -11,9 +18,6 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
- * Author: Josh Pelkey <jpelkey@gatech.edu>
- * Re-impl for ghostdag: Eduardo Lechinski Ramos <eduardo_ramos@edu.univali.br>
  */
 
 #include "node-topology-helper.h"
