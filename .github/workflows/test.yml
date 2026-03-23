@@ -5,6 +5,7 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+  workflow_call:
 
 concurrency:
   group: test-${{ github.ref }}
@@ -52,7 +53,6 @@ jobs:
           cache-to: |
             type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/cache:test-builder,mode=max
 
-
       - name: Run ghostdagtest
         run: |
           docker run --rm \
@@ -61,8 +61,7 @@ jobs:
             /usr/local/bin/ghostdagtest \
             --gtest_output=xml:/results/ghostdagtest-results.xml
 
-
-      - name: Run ghostdagtest
+      - name: Run mempooltest
         run: |
           docker run --rm \
             -v ${{ github.workspace }}/results:/results \
