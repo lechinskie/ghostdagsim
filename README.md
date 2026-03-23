@@ -41,12 +41,14 @@ And then configure and run using ns3 facilities:
 ```
 
 You can also build and run with docker
+> Or you can use the pre built docker image [RELEASE](https://github.com/eramoss/ghostdagsim/releases) if you just wanna run changing the parameters, not the code.
 ```bash
 docker build -t ghostdagsim .
 
-docker run [-v $(pwd)/results:/results] [-e MPI_THREADS=4] ghostdagsim -- <flags>
-#          ^ Optional results folder    ^ Optional (Default 1)
+docker run [-v $(pwd):/results] [-e MPI_THREADS=4] ghostdagsim -- <flags>
+#          ^ Opt Map folder      ^ Opt (Default 1)
 ```
+
 
 ## Configuration
 
