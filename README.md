@@ -105,7 +105,25 @@ For run tests you can just use ns3 as well:
 ./ns3 run <testname>
 ```
 
-
 ## License
 
-Academic project for research purposes.
+This project is licensed under **GPL-2.0** (see [LICENSE](LICENSE))
+
+### Third-party components
+
+- **Network topology & node architecture**: Derived from 
+  [Bitcoin-Simulator](https://github.com/arthurgervais/Bitcoin-Simulator) by 
+  Arthur Gervais et al., also GPL-2.0.
+
+- **Mempool** (`mempool.h`, `mempool.cc`): Originally from 
+  [DAG-Sword](https://github.com/Tem12/DAG-simulator) by Hladký, Perešíni et al. 
+  (BUT Security@FIT, 2021–2022), distributed under their BSD license with GPL-2.0.
+
+- **json.hpp** (`thirdparty/json.h`): [nlohmann/json](https://github.com/nlohmann/json) 
+  by Niels Lohmann, MIT License. Included unmodified.
+  
+### Attribution
+
+If you use this simulator in your research, please cite or link to this repository.
+Academic contributions and forks are welcome — just keep the GPL-2.0 license and 
+preserve the attribution headers in the source files.
