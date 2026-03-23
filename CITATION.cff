@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+title: GhostDAG Simulator
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: Ramos
+    given-names: Eduardo
+    email: eduardo_ramos@edu.univali.br
+    affiliation: UNIVALI
+repository-code: https://github.com/eramoss/ghostdagsim
+license: GPL-2.0
+version: 0.1.0
+date-released: 2026-03-23
+abstract: >
+  An ns-3 based network simulator for the GHOSTDAG consensus protocol,
+  supporting MPI distributed simulation, realistic P2P topology, and
+  metrics collection for blockchain DAG research.
+keywords:
+  - ghostdag
+  - blockchain
+  - dag
+  - ns-3
+  - network simulation
+  - consensus
