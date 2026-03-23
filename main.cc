@@ -39,8 +39,6 @@
     "Distributed simulations need to run with NS3_MPI module, reconfigure and build your ns3 waf again pls"
 #endif
 
-#define METRICS_SCENARIO "run0"
-
 using namespace ns3;
 
 double GetWallTime();
@@ -86,6 +84,7 @@ int main(int argc, char *argv[]) {
 
   enum Region *minersRegions;
   int *minersStrategies;
+  std::string metrics_scenario = "run0";
 
   Time::SetResolution(Time::NS);
 
@@ -112,6 +111,8 @@ int main(int argc, char *argv[]) {
   cmd.AddValue("blocks_per_miner",
                "Target number of blocks each miner should produce",
                targetBlocksPerMiner);
+  cmd.AddValue("run_name", "Name tag for this simulation run",
+               metrics_scenario);
   cmd.Parse(argc, argv);
 
   if (noMiners > totalNoNodes) {
@@ -145,7 +146,7 @@ int main(int argc, char *argv[]) {
   uint32_t systemCount = MpiInterface::GetSize();
 
   MetricsCollector::SetRank(systemId);
-  MetricsCollector::SetOutputDir("results/" METRICS_SCENARIO);
+  MetricsCollector::SetOutputDir("results/" + metrics_scenario);
   MetricsCollector::SetImmediate(true);
   MetricsCollector::SetTotalNodes(totalNoNodes);
 
@@ -156,7 +157,7 @@ int main(int argc, char *argv[]) {
   cfg.ghostdag_k = ghostdagK;
   cfg.mempool_size = mempoolSize;
   cfg.miners = noMiners;
-  cfg.scenario_name = METRICS_SCENARIO;
+  cfg.scenario_name = metrics_scenario;
   cfg.sim_duration_minutes = stop;
   cfg.total_nodes = totalNoNodes;
   cfg.tx_gen_interval = txGenInterval;
