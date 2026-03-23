@@ -23,6 +23,10 @@ jobs:
   test:
     name: Run tests before publish
     uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+      packages: write
+      checks: write
 
   # ------------------------------------------------------------------
   # 2. Build & push the production image to GHCR
