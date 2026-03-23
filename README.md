@@ -25,6 +25,8 @@ Based on [Bitcoin-Simulator by Arthur Gervais](https://github.com/arthurgervais/
 - C++17 compatible compiler
 
 ## Quick Start
+Clone or download this project on ns3 distribution folder at `ns3-<dist>/ns3-<version>/scratch/`.
+And then configure and run using ns3 facilities:
 
 ```bash
 # Build with ns3 waf
