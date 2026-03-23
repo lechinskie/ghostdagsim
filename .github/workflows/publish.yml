@@ -78,7 +78,7 @@ jobs:
             org.opencontainers.image.description=ns-3 / MPI network simulator for the GHOSTDAG consensus protocol
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.licenses=GPL-2.0
 
       - name: Build & push
         id: push
@@ -114,40 +114,8 @@ jobs:
           cosign sign --yes \
             "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
 
-      # ------------------------------------------------------------------
-      # 4. Create a GitHub Release when triggered by a semver tag
-      # ------------------------------------------------------------------
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          body: |
-            ## Container image
-
-            ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-            ```
-
-            ### Verify the image signature (Sigstore / cosign)
-            ```bash
-            cosign verify \
-              --certificate-identity-regexp "https://github.com/${{ github.repository }}.*" \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
-            ```
-
-            ### Run
-            ```bash
-            docker run --rm \
-              -v $(pwd)/results:/results \
-              -e MPI_THREADS=4 \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }} \
-              -- --nodes 20 --miners 10 --k 10
-            ```
-
   # ------------------------------------------------------------------
-  # 5. Post the published digest as a summary
+  # 4. Post the published digest as a summary
   # ------------------------------------------------------------------
   summary:
     name: Publish summary
