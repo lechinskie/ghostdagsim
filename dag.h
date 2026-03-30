@@ -53,11 +53,6 @@ enum Region {
   OTHER
 };
 
-enum MinerType {
-  NORMAL_MINER,
-  SIMPLE_ATTACKER,
-};
-
 enum Messages {
   NO_MESSAGE,
   PING,
