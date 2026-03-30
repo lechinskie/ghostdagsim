@@ -1068,50 +1068,16 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
     nodes.push_back(i);
   }
 
-  /*   //Print the initialized nodes
-    if (m_systemId == 0)
-    {
-      for (std::vector<uint32_t>::iterator j = nodes.begin(); j != nodes.end();
-    j++)
-      {
-            std::cout << *j << " " ;
-      }
-    } */
-
   // Choose the miners randomly. They should be unique (no miner should be
   // chosen twice). So, remove each chose miner from nodes vector
   for (uint32_t i = 0; i < noMiners; i++) {
     uint32_t index = rand() % nodes.size();
     m_miners.push_back(nodes[index]);
 
-    /*     if (m_systemId == 0)
-          std::cout << "\n" << "Chose " << nodes[index] << "     "; */
-
     nodes.erase(nodes.begin() + index);
-
-    /* 	if (m_systemId == 0)
-            {
-          for (std::vector<uint32_t>::iterator it = nodes.begin(); it !=
-       nodes.end(); it++)
-          {
-                std::cout << *it << " " ;
-          }
-            } */
   }
 
   sort(m_miners.begin(), m_miners.end());
-
-  /*   //Print the miners
-    if (m_systemId == 0)
-    {
-      std::cout << "\n\nThe miners are:\n";
-      for (std::vector<uint32_t>::iterator j = m_miners.begin(); j !=
-    m_miners.end(); j++)
-      {
-            std::cout << *j << " " ;
-      }
-      std::cout << "\n\n";
-    } */
 
   // Interconnect the miners
   for (auto &miner : m_miners) {
@@ -1121,24 +1087,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
     }
   }
 
-  /*   //Print the miners' connections
-    if (m_systemId == 0)
-    {
-      std::cout << "The miners are interconnected:";
-      for(auto &miner : m_nodesConnections)
-      {
-            std::cout << "\nMiner " << miner.first << ":\t" ;
-            for(std::vector<uint32_t>::const_iterator it = miner.second.begin();
-    it != miner.second.end(); it++)
-            {
-          std::cout << *it << "\t" ;
-            }
-      }
-      std::cout << "\n" << std::endl;
-    } */
-
   // Interconnect the nodes
-
   // nodes contain the ids of the nodes
   nodes.clear();
 
@@ -1188,29 +1137,21 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
       uint32_t candidatePeer = nodes[index];
 
       if (candidatePeer == i) {
-        /* 		if (m_systemId == 0)
-                  std::cout << "Node " << i << " does not need a connection with
-           itself" << "\n"; */
+
       } else if (std::find(m_nodesConnections[i].begin(),
                            m_nodesConnections[i].end(),
                            candidatePeer) != m_nodesConnections[i].end()) {
-        /* 		if (m_systemId == 0)
-                  std::cout << "Node " << i << " has already a connection to
-           Node " << nodes[index] << "\n"; */
+
       } else if (m_nodesConnections[candidatePeer].size() >=
                  static_cast<size_t>(m_maxConnections[candidatePeer])) {
-        /* 		if (m_systemId == 0)
-                  std::cout << "Node " << nodes[index] << " has already " <<
-           m_maxConnections[candidatePeer] << " connections" << "\n"; */
+
       } else {
         m_nodesConnections[i].push_back(candidatePeer);
         m_nodesConnections[candidatePeer].push_back(i);
 
         if (m_nodesConnections[candidatePeer].size() ==
             static_cast<size_t>(m_maxConnections[candidatePeer])) {
-          /* 		  if (m_systemId == 0)
-                      std::cout << "Node " << nodes[index] << " is removed from
-             index\n"; */
+
           nodes.erase(nodes.begin() + index);
         }
       }
@@ -1229,61 +1170,27 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
       uint32_t candidatePeer = nodes[index];
 
       if (candidatePeer == i) {
-        /* 		if (m_systemId == 0)
-                  std::cout << "Node " << i << " does not need a connection with
-           itself" << "\n"; */
+
       } else if (std::find(m_nodesConnections[i].begin(),
                            m_nodesConnections[i].end(),
                            candidatePeer) != m_nodesConnections[i].end()) {
-        /* 		if (m_systemId == 0)
-                  std::cout << "Node " << i << " has already a connection to
-           Node " << nodes[index] << "\n"; */
+
       } else if (m_nodesConnections[candidatePeer].size() >=
                  static_cast<size_t>(m_maxConnections[candidatePeer])) {
-        /* 		if (m_systemId == 0)
-                  std::cout << "Node " << nodes[index] << " has already " <<
-           m_maxConnections[candidatePeer] << " connections" << "\n"; */
+
       } else {
         m_nodesConnections[i].push_back(candidatePeer);
         m_nodesConnections[candidatePeer].push_back(i);
 
         if (m_nodesConnections[candidatePeer].size() ==
             static_cast<size_t>(m_maxConnections[candidatePeer])) {
-          /* 		  if (m_systemId == 0)
-                      std::cout << "Node " << nodes[index] << " is removed from
-             index\n"; */
+
           nodes.erase(nodes.begin() + index);
         }
       }
       count++;
     }
   }
-
-  // Print the nodes with fewer than required connections
-  /*if (m_systemId == 0) {
-    for (uint32_t i = 0; i < m_totalNoNodes; i++) {
-      if (m_nodesConnections[i].size() <
-          static_cast<size_t>(m_minConnections[i]))
-        std::cout << "Node " << i << " should have at least "
-                  << m_minConnections[i] << " connections but it has only "
-                  << m_nodesConnections[i].size() << " connections\n";
-    }
-  } */
-  /*   //Print the nodes' connections
-    if (m_systemId == 0)
-    {
-      std::cout << "The nodes connections are:" << std::endl;
-      for(auto &node : m_nodesConnections)
-      {
-            std::cout << "\nNode " << node.first << ":    " ;
-            for(std::vector<uint32_t>::const_iterator it = node.second.begin();
-    it != node.second.end(); it++)
-            {
-          std::cout  << "\t" << *it;
-            }
-      }
-      std::cout << "\n" << std::endl;
-    } */
 
   // Print the nodes' connections distribution
   if (m_systemId == 0) {
@@ -1300,11 +1207,8 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
     for (size_t i = 0; i < connectionsDistributionIntervals.size(); i++)
       stats[i] = 0;
 
-    std::cout << "\nThe nodes connections stats are:\n";
     for (auto &node : m_nodesConnections) {
-      // std::cout << "\nNode " << node.first << ": " <<
-      // m_minConnections[node.first] << ", " << m_maxConnections[node.first] <<
-      // ", " << node.second.size();
+
       bool placed = false;
 
       if (std::find(m_miners.begin(), m_miners.end(), node.first) ==
@@ -1321,21 +1225,21 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
         }
       }
       if (!placed) {
-        // std::cout << "Node " << node.first << " has " << node.second.size()
-        // << " connections\n";
         stats[connectionsDistributionIntervals.size() - 1]++;
       }
     }
 
-    std::cout << "Average Number of Connections Per Node = "
-              << averageNoConnectionsPerNode / (m_totalNoNodes - m_noMiners)
-              << "\nAverage Number of Connections Per Miner = "
-              << averageNoConnectionsPerMiner / (m_noMiners)
-              << "\nConnections distribution: \n";
+    if (m_systemId == 0) {
+      std::cout << "Average Number of Connections Per Node = "
+                << averageNoConnectionsPerNode / (m_totalNoNodes - m_noMiners)
+                << "\nAverage Number of Connections Per Miner = "
+                << averageNoConnectionsPerMiner / (m_noMiners)
+                << "\nConnections distribution: \n";
 
-    for (uint32_t i = 0; i < connectionsDistributionIntervals.size(); i++) {
-      std::cout << intervals[i] << "-" << intervals[i + 1] << ": " << stats[i]
-                << "(" << stats[i] * 100.0 / m_totalNoNodes << "%)\n";
+      for (uint32_t i = 0; i < connectionsDistributionIntervals.size(); i++) {
+        std::cout << intervals[i] << "-" << intervals[i + 1] << ": " << stats[i]
+                  << "(" << stats[i] * 100.0 / m_totalNoNodes << "%)\n";
+      }
     }
 
     delete[] intervals;
@@ -1363,9 +1267,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
   for (uint32_t i = 0; i < m_totalNoNodes; i++) {
     NodeContainer currentNode;
     currentNode.Create(1, i % m_noCpus);
-    /* 	if (m_systemId == 0)
-          std::cout << "Creating a node with Id = " << i << " and systemId = "
-       << i % m_noCpus << "\n"; */
+
     m_nodes.push_back(currentNode);
     AssignRegion(i);
     AssignInternetSpeeds(i);
@@ -1544,18 +1446,20 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
 
   tFinish = GetWallTime();
 
-  if (m_systemId == 0)
+  if (m_systemId == 0) {
     std::cout << "The total number of links is " << m_totalNoLinks << " ("
               << tFinish - tStart << "s).\n";
 
-  std::cout << "Mean Miner Data Rate: " << mean_miner_data_rate << " Mbps"
-            << std::endl;
-  std::cout << "Mean Miner Delay:     " << mean_miner_delay << " ms"
-            << std::endl;
+    std::cout << "Mean Miner Data Rate: " << mean_miner_data_rate << " Mbps"
+              << std::endl;
+    std::cout << "Mean Miner Delay:     " << mean_miner_delay << " ms"
+              << std::endl;
 
-  std::cout << "Mean Node Data Rate: " << mean_node_data_rate << " Mbps"
-            << std::endl;
-  std::cout << "Mean Node Delay:     " << mean_node_delay << " ms" << std::endl;
+    std::cout << "Mean Node Data Rate: " << mean_node_data_rate << " Mbps"
+              << std::endl;
+    std::cout << "Mean Node Delay:     " << mean_node_delay << " ms"
+              << std::endl;
+  }
 }
 
 GhostDagTopologyHelper::~GhostDagTopologyHelper() {
@@ -1597,13 +1501,6 @@ void GhostDagTopologyHelper::AssignIpv4Addresses(Ipv4AddressHelperCustom ip) {
     uint32_t node1 = (currentContainer.Get(0))->GetNode()->GetId();
     uint32_t node2 = (currentContainer.Get(1))->GetNode()->GetId();
 
-    /*     if (m_systemId == 0)
-          std::cout << i << "/" << m_devices.size () << "\n"; */
-    /* 	if (m_systemId == 0)
-              std::cout << "Node " << node1 << "(" << interfaceAddress1 << ") is
-       connected with node  "
-                    << node2 << "(" << interfaceAddress2 << ")\n"; */
-
     m_nodesConnectionsIps[node1].push_back(interfaceAddress2);
     m_nodesConnectionsIps[node2].push_back(interfaceAddress1);
 
@@ -1620,22 +1517,6 @@ void GhostDagTopologyHelper::AssignIpv4Addresses(Ipv4AddressHelperCustom ip) {
     m_peersUploadSpeeds[node2][interfaceAddress1] =
         m_nodesInternetSpeeds[node1].upload_speed;
   }
-
-  /*   //Print the nodes' connections
-    if (m_systemId == 0)
-    {
-      std::cout << "The nodes connections are:" << std::endl;
-      for(auto &node : m_nodesConnectionsIps)
-      {
-            std::cout << "\nNode " << node.first << ":    " ;
-            for(std::vector<Ipv4Address>::const_iterator it =
-    node.second.begin(); it != node.second.end(); it++)
-            {
-          std::cout  << "\t" << *it ;
-            }
-      }
-      std::cout << "\n" << std::endl;
-    } */
 
   tFinish = GetWallTime();
   if (m_systemId == 0)
@@ -1679,11 +1560,6 @@ void GhostDagTopologyHelper::AssignRegion(uint32_t id) {
     int number = m_nodesDistribution(m_generator);
     m_nodesRegion[id] = number;
   }
-
-  /*   if (m_systemId == 0)
-      std::cout << "SystemId = " << m_systemId << " assigned node " << id << "
-     in " << getBitcoinRegion(getBitcoinEnum(m_bitcoinNodesRegion[id])) << "\n";
-   */
 }
 
 void GhostDagTopologyHelper::AssignInternetSpeeds(uint32_t id) {
@@ -1737,13 +1613,6 @@ void GhostDagTopologyHelper::AssignInternetSpeeds(uint32_t id) {
     }
     }
   }
-
-  /*  if (m_systemId == 0)
-      std::cout << "SystemId = " << m_systemId << " assigned node " << id << "
-     in " << getBitcoinRegion(getBitcoinEnum(m_bitcoinNodesRegion[id]))
-                << " with download speed = " <<
-     m_nodesInternetSpeeds[id].downloadSpeed << " Mbps and upload speed " <<
-     m_nodesInternetSpeeds[id].uploadSpeed << " Mbps\n"; */
 }
 
 uint32_t *GhostDagTopologyHelper::GetNodesRegions() { return m_nodesRegion; }
