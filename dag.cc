@@ -256,8 +256,6 @@ void Blockchain::AddBlock(const Block &new_block) {
     if (!blocks.count(p)) {
       orphans[block_id] = new_block;
 
-      METRIC_BLOCK_ORPHANED(node_id_metric, block_id,
-                            new_block.header.parent_hashes, NOW);
       return;
     }
   }
@@ -339,8 +337,6 @@ void Blockchain::ProcessOrphans() {
       orphans.erase(it);
       AddBlock(ob);
 
-      if (HasBlock(ob.header.block_id))
-        METRIC_BLOCK_UNORPHANED(node_id_metric, ob.header.block_id, NOW);
       progress = true;
     }
   }

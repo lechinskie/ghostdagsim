@@ -32,6 +32,7 @@
 #include "ns3/point-to-point-module.h"
 
 #include <mpi.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 
 #ifndef NS3_MPI
@@ -145,24 +146,27 @@ int main(int argc, char *argv[]) {
   uint32_t systemId = MpiInterface::GetSystemId();
   uint32_t systemCount = MpiInterface::GetSize();
 
-  MetricsCollector::SetRank(systemId);
-  MetricsCollector::SetOutputDir("results/" + metrics_scenario);
-  MetricsCollector::SetImmediate(true);
-  MetricsCollector::SetTotalNodes(totalNoNodes);
-
-  SimulationConfig cfg;
-  cfg.lambda = lambda;
-  cfg.tau = tau;
-  cfg.tx_fee_lambda = txFeeLambda;
-  cfg.ghostdag_k = ghostdagK;
-  cfg.mempool_size = mempoolSize;
-  cfg.miners = noMiners;
-  cfg.scenario_name = metrics_scenario;
-  cfg.sim_duration_minutes = stop;
-  cfg.total_nodes = totalNoNodes;
-  cfg.tx_gen_interval = txGenInterval;
-  cfg.txs_per_block = txsPerBlock;
-  MetricsCollector::SetConfig(cfg);
+  EventLogger::Get().Init("results/" + metrics_scenario, systemId);
+#ifdef GHOSTDAGSIM_METRICS
+  if (systemId == 0) {
+    nlohmann::json cfg;
+    cfg["lambda"] = lambda;
+    cfg["k"] = ghostdagK;
+    cfg["tau"] = tau;
+    cfg["nodes"] = totalNoNodes;
+    cfg["miners"] = noMiners;
+    cfg["tx_fee_lambda"] = txFeeLambda;
+    cfg["mempool_size"] = mempoolSize;
+    cfg["scenario_name"] = metrics_scenario;
+    cfg["sim_duration_minutes"] = stop;
+    cfg["tx_gen_interval"] = txGenInterval;
+    cfg["txs_per_block"] = txsPerBlock;
+    std::error_code ec;
+    std::filesystem::create_directories("results/" + metrics_scenario, ec);
+    std::ofstream f("results/" + metrics_scenario + "/config.json");
+    f << cfg.dump(2) << "\n";
+  }
+#endif
 
   if (systemId == 0) {
     std::cout << "\n=== GHOSTDAG Network Simulator ===\n";
@@ -265,9 +269,7 @@ int main(int argc, char *argv[]) {
 
   Simulator::Run();
   Simulator::Destroy();
-
-  MetricsCollector::PrintSummary();
-  MetricsCollector::Dump();
+  EventLogger::Get().Close();
 
   MpiInterface::Disable();
 

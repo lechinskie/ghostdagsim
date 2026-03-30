@@ -17,340 +17,228 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
-
 #pragma once
 
-#include <cstdint>
-#include <map>
-#include <set>
+#include "thirdparty/json.h"
+#include <filesystem>
+#include <fstream>
 #include <string>
-#include <vector>
 
-struct BlockMinedEvent {
-  double sim_time;
-  uint32_t miner_id;
-  uint64_t block_id;
-  uint32_t num_parents;
-  uint64_t dag_width;
-  uint32_t num_txs;
-  uint32_t block_size;
-};
-
-struct BlockReceivedEvent {
-  double sim_time;
-  uint32_t node_id;
-  uint64_t block_id;
-  uint32_t miner_id;
-  double creation_time;
-  double propagation_delay;
-  std::string from_ip;
-  bool was_requested;
-};
-
-struct BlockOrphanedEvent {
-  double sim_time;
-  uint32_t node_id;
-  uint64_t block_id;
-  std::vector<uint64_t> missing_parent_ids;
-};
-
-struct BlockUnorphanedEvent {
-  double sim_time;
-  uint32_t node_id;
-  uint64_t block_id;
-  double orphan_duration;
-};
-
-struct BlockColoredEvent {
-  double sim_time;
-  uint32_t node_id;
-  uint64_t block_id;
-  bool is_blue;
-  uint64_t blue_score;
-  uint64_t blue_set_size;
-  uint64_t selected_parent;
-};
-
-struct DagSnapshotEvent {
-  double sim_time;
-  uint32_t node_id;
-  uint64_t total_blocks;
-  uint64_t blue_blocks;
-  uint64_t red_blocks;
-  uint64_t orphan_blocks;
-  uint64_t dag_width;
-  double blue_ratio;
-};
-
-struct RedundantMsgEvent {
-  double sim_time;
-  uint32_t node_id;
-  uint64_t item_id;
-  std::string msg_type;
-  std::string from_ip;
-  uint64_t bytes;
-};
-
-struct MsgEvent {
-  double sim_time;
-  uint32_t node_id;
-  uint64_t item_id;
-  std::string msg_type;
-  std::string from_ip;
-  uint64_t bytes;
-};
-
-struct TxGeneratedEvent {
-  double sim_time;
-  uint32_t node_id;
-  uint64_t tx_id;
-  uint32_t fee;
-};
-
-struct TxReceivedEvent {
-  double sim_time;
-  uint32_t node_id;
-  uint64_t tx_id;
-  uint32_t fee;
-  double propagation_delay;
-  std::string from_ip;
-};
-
-struct TxConfirmedEvent {
-  double sim_time;
-  uint32_t miner_id;
-  uint64_t tx_id;
-  uint64_t block_id;
-  uint32_t fee;
-};
-
-struct InvSentEvent {
-  double sim_time;
-  uint32_t node_id;
-  std::string to_ip;
-  std::string inv_type;
-  uint64_t item_id;
-  uint64_t bytes;
-};
-
-struct BlockCoverageEvent {
-  double sim_time;
-  uint64_t block_id;
-  double block_creation_time;
-  double elapsed;
-  uint32_t nodes_reached;
-  uint32_t total_nodes;
-  double coverage_ratio;
-};
-
-struct SimulationConfig {
-  std::string scenario_name;
-  uint32_t ghostdag_k;
-  double lambda;
-  double tau;
-  uint32_t total_nodes;
-  uint32_t miners;
-  uint32_t txs_per_block;
-  uint32_t mempool_size;
-  double tx_fee_lambda;
-  double tx_gen_interval;
-  double sim_duration_minutes;
-};
-
-class MetricsCollector {
+class EventLogger {
 public:
-  static void SetRank(uint32_t rank);
-  static void SetTotalNodes(uint32_t total);
-  static void SetImmediate(bool imm);
-  static void SetConfig(const SimulationConfig &config);
+  static EventLogger &Get() {
+    static EventLogger instance;
+    return instance;
+  }
 
-  static void RecordBlockMined(uint32_t miner_id, uint64_t block_id,
-                               uint32_t num_parents, uint64_t dag_width,
-                               uint32_t num_txs, uint32_t block_size_bytes,
-                               double sim_time);
+  void Init(const std::string &output_dir, uint32_t rank) {
+    std::string path =
+        output_dir + "/rank" + std::to_string(rank) + "/events.jsonl";
+    std::filesystem::create_directories(output_dir + "/rank" +
+                                        std::to_string(rank));
+    m_file.open(path, std::ios::out | std::ios::app);
+    m_file.rdbuf()->pubsetbuf(m_io_buffer, sizeof(m_io_buffer));
 
-  static void RecordBlockReceived(uint32_t node_id, uint64_t block_id,
-                                  uint32_t miner_id, double creation_time,
-                                  double sim_time, std::string from_ip,
-                                  bool was_requested = true);
+    m_buffer.reserve(FLUSH_THRESHOLD);
 
-  static void
-  RecordBlockOrphaned(uint32_t node_id, uint64_t block_id,
-                      const std::vector<uint64_t> &missing_parent_ids,
-                      double sim_time);
+    m_enabled = m_file.is_open();
+  }
 
-  static void RecordBlockUnorphaned(uint32_t node_id, uint64_t block_id,
-                                    double sim_time);
+  void Write(nlohmann::json &obj) {
+    if (!m_enabled)
+      return;
+    m_buffer += obj.dump();
+    m_buffer += '\n';
+    if (m_buffer.size() >= FLUSH_THRESHOLD)
+      flush();
+  }
 
-  static void RecordBlockColored(uint32_t node_id, uint64_t block_id,
-                                 bool is_blue, uint64_t blue_score,
-                                 uint64_t blue_set_size,
-                                 uint64_t selected_parent, double sim_time);
+  void Close() {
+    flush();
+    if (m_file.is_open())
+      m_file.close();
+    m_enabled = false;
+  }
 
-  static void RecordDagSnapshot(uint32_t node_id, uint64_t total_blocks,
-                                uint64_t blue_blocks, uint64_t red_blocks,
-                                uint64_t orphan_blocks, uint64_t dag_width,
-                                double sim_time);
-
-  static void RecordRedundantMsg(uint32_t node_id, uint64_t item_id,
-                                 std::string msg_type, std::string from_ip,
-                                 uint64_t bytes, double sim_time);
-
-  static void RecordMsg(uint32_t node_id, uint64_t item_id,
-                        std::string msg_type, std::string from_ip,
-                        uint64_t bytes, double sim_time);
-
-  static void RecordTxGenerated(uint32_t node_id, uint64_t tx_id, uint32_t fee,
-                                double sim_time);
-
-  static void RecordTxReceived(uint32_t node_id, uint64_t tx_id, uint32_t fee,
-                               double propagation_delay, std::string from_ip,
-                               double sim_time);
-
-  static void RecordTxConfirmed(uint32_t miner_id, uint64_t tx_id,
-                                uint64_t block_id, uint32_t fee,
-                                double sim_time);
-
-  static void RecordInvSent(uint32_t node_id, std::string to_ip,
-                            std::string inv_type, uint64_t item_id,
-                            uint64_t bytes, double sim_time);
-
-  static void RecordBlockCoverageSnapshot(uint64_t block_id,
-                                          double creation_time,
-                                          double sim_time);
-
-  static void Dump();
-  static void PrintSummary();
-  static void Reset();
-  static void SetOutputDir(const std::string &dir);
-  static std::ofstream &GetOrOpenFile(const std::string &name,
-                                      const std::string &header);
+  bool IsEnabled() const { return m_enabled; }
 
 private:
-  static void DumpBlocksMined(const std::string &path);
-  static void DumpBlocksReceived(const std::string &path);
-  static void DumpBlocksOrphaned(const std::string &path);
-  static void DumpBlocksUnorphaned(const std::string &path);
-  static void DumpBlocksColored(const std::string &path);
-  static void DumpDagSnapshots(const std::string &path);
-  static void DumpRedundantMsgs(const std::string &path);
-  static void DumpMsgs(const std::string &path);
-  static void DumpTxsGenerated(const std::string &path);
-  static void DumpTxsReceived(const std::string &path);
-  static void DumpTxsConfirmed(const std::string &path);
-  static void DumpInvsSent(const std::string &path);
-  static void DumpBlockCoverage(const std::string &path);
-  static void DumpConfig(const std::string &path);
+  void flush() {
+    if (m_buffer.empty())
+      return;
+    m_file.write(m_buffer.data(),
+                 static_cast<std::streamsize>(m_buffer.size()));
+    m_buffer.clear();
+  }
 
-  static std::string FilePath(const std::string &dir, const std::string &name);
+  EventLogger() : m_enabled(false) {}
+  ~EventLogger() { Close(); }
+  EventLogger(const EventLogger &) = delete;
+  EventLogger &operator=(const EventLogger &) = delete;
 
-  static std::string s_outputDir;
-  static std::map<std::string, std::ofstream> s_fileHandles;
-  static uint32_t s_rank;
-  static uint32_t s_totalNodes;
-  static SimulationConfig s_config;
-  static bool s_hasConfig;
-  static bool s_immediate;
+  static constexpr size_t FLUSH_THRESHOLD = 1 * 1024 * 1024;
 
-  static std::vector<BlockMinedEvent> s_blocksMined;
-  static std::vector<BlockReceivedEvent> s_blocksReceived;
-  static std::vector<BlockOrphanedEvent> s_blocksOrphaned;
-  static std::vector<BlockUnorphanedEvent> s_blocksUnorphaned;
-  static std::vector<BlockColoredEvent> s_blocksColored;
-  static std::vector<DagSnapshotEvent> s_dagSnapshots;
-  static std::vector<RedundantMsgEvent> s_redundantMsgs;
-  static std::vector<MsgEvent> s_msgs;
-  static std::vector<TxGeneratedEvent> s_txsGenerated;
-  static std::vector<TxReceivedEvent> s_txsReceived;
-  static std::vector<TxConfirmedEvent> s_txsConfirmed;
-  static std::vector<InvSentEvent> s_invsSent;
-  static std::vector<BlockCoverageEvent> s_blockCoverage;
-
-  static std::map<uint64_t, std::set<uint32_t>> s_blockReceivers;
-  static std::map<uint64_t, double> s_orphanedAt;
+  std::ofstream m_file;
+  std::string m_buffer;
+  char m_io_buffer[4 * 1024 * 1024];
+  bool m_enabled;
 };
 
 #ifdef GHOSTDAGSIM_METRICS
 
-#define METRIC_BLOCK_MINED(miner, bid, nparents, width, ntxs, sz, t)           \
-  MetricsCollector::RecordBlockMined(miner, bid, nparents, width, ntxs, sz, t)
+#define LOG_FIELD(key, value) obj[(key)] = (value);
 
-#define METRIC_BLOCK_RECEIVED(nid, bid, mid, tcreate, tnow, ip, req)           \
-  MetricsCollector::RecordBlockReceived(nid, bid, mid, tcreate, tnow, ip, req)
-
-#define METRIC_BLOCK_ORPHANED(nid, bid, parents_vec, t)                        \
-  MetricsCollector::RecordBlockOrphaned(nid, bid, parents_vec, t)
-
-#define METRIC_BLOCK_UNORPHANED(nid, bid, t)                                   \
-  MetricsCollector::RecordBlockUnorphaned(nid, bid, t)
-
-#define METRIC_BLOCK_COLORED(nid, bid, blue, score, bsz, sp, t)                \
-  MetricsCollector::RecordBlockColored(nid, bid, blue, score, bsz, sp, t)
-
-#define METRIC_DAG_SNAPSHOT(nid, total, blue, red, orph, width, t)             \
-  MetricsCollector::RecordDagSnapshot(nid, total, blue, red, orph, width, t)
-
-#define METRIC_REDUNDANT_MSG(nid, iid, mtype, ip, bytes, t)                    \
-  MetricsCollector::RecordRedundantMsg(nid, iid, mtype, ip, bytes, t)
-
-#define METRIC_MSG(nid, iid, mtype, ip, bytes, t)                              \
-  MetricsCollector::RecordMsg(nid, iid, mtype, ip, bytes, t)
-
-#define METRIC_TX_GENERATED(nid, txid, fee, t)                                 \
-  MetricsCollector::RecordTxGenerated(nid, txid, fee, t)
-
-#define METRIC_TX_RECEIVED(nid, txid, fee, delay, ip, t)                       \
-  MetricsCollector::RecordTxReceived(nid, txid, fee, delay, ip, t)
-
-#define METRIC_TX_CONFIRMED(mid, txid, bid, fee, t)                            \
-  MetricsCollector::RecordTxConfirmed(mid, txid, bid, fee, t)
-
-#define METRIC_INV_SENT(nid, ip, itype, iid, bytes, t)                         \
-  MetricsCollector::RecordInvSent(nid, ip, itype, iid, bytes, t)
-
-#define METRIC_BLOCK_COVERAGE(bid, tcreate, tnow)                              \
-  MetricsCollector::RecordBlockCoverageSnapshot(bid, tcreate, tnow)
+#define LOG_EVENT(event_name, ...)                                             \
+  do {                                                                         \
+    if (!EventLogger::Get().IsEnabled())                                       \
+      break;                                                                   \
+    nlohmann::json obj;                                                        \
+    obj["event"] = (event_name);                                               \
+    obj["t"] = ns3::Simulator::Now().GetSeconds();                             \
+    __VA_ARGS__                                                                \
+    EventLogger::Get().Write(obj);                                             \
+  } while (0)
 
 #else
 
-#define METRIC_BLOCK_MINED(...)                                                \
-  do {                                                                         \
-  } while (0)
-#define METRIC_BLOCK_RECEIVED(...)                                             \
-  do {                                                                         \
-  } while (0)
-#define METRIC_BLOCK_ORPHANED(...)                                             \
-  do {                                                                         \
-  } while (0)
-#define METRIC_BLOCK_UNORPHANED(...)                                           \
-  do {                                                                         \
-  } while (0)
-#define METRIC_BLOCK_COLORED(...)                                              \
-  do {                                                                         \
-  } while (0)
-#define METRIC_DAG_SNAPSHOT(...)                                               \
-  do {                                                                         \
-  } while (0)
-#define METRIC_REDUNDANT_MSG(...)                                              \
-  do {                                                                         \
-  } while (0)
-#define METRIC_MSG(...)                                                        \
-  do {                                                                         \
-  } while (0)
-#define METRIC_TX_GENERATED(...)                                               \
-  do {                                                                         \
-  } while (0)
-#define METRIC_TX_RECEIVED(...)                                                \
-  do {                                                                         \
-  } while (0)
-#define METRIC_TX_CONFIRMED(...)                                               \
-  do {                                                                         \
-  } while (0)
-#define METRIC_INV_SENT(...)                                                   \
-  do {                                                                         \
-  } while (0)
-#define METRIC_BLOCK_COVERAGE(...)                                             \
+#define LOG_FIELD(key, value)
+#define LOG_EVENT(event_name, ...)                                             \
   do {                                                                         \
   } while (0)
 
 #endif
+
+// clang-format off
+
+// --- Block lifecycle --------------------------------------------------------
+
+#define EVENT_BLOCK_MINED(node, block, parent_hashes, parent_count)    \
+  LOG_EVENT("block_mined",                                             \
+    LOG_FIELD("node",         (uint64_t)(node))                        \
+    LOG_FIELD("block",        (uint64_t)(block))                       \
+    LOG_FIELD("parents",      (parent_hashes))                         \
+    LOG_FIELD("parent_count", (uint32_t)(parent_count))                \
+  )
+
+#define EVENT_BLOCK_RECEIVED(node, block, from, size_bytes,            \
+                             total_txs, already_known, parent_count)   \
+  LOG_EVENT("block_received",                                          \
+    LOG_FIELD("node",          (uint64_t)(node))                       \
+    LOG_FIELD("block",         (uint64_t)(block))                      \
+    LOG_FIELD("from",          (std::string)(from))                    \
+    LOG_FIELD("size_bytes",    (uint32_t)(size_bytes))                 \
+    LOG_FIELD("total_txs",     (uint32_t)(total_txs))                  \
+    LOG_FIELD("already_known", (uint32_t)(already_known))              \
+    LOG_FIELD("overlap_ratio", (total_txs) > 0                         \
+                                 ? (double)(already_known)/(total_txs) \
+                                 : 1.0)                                \
+    LOG_FIELD("parent_count",  (uint32_t)(parent_count))               \
+  )
+
+#define EVENT_BLOCK_ORPHANED(node, block, missing_parents)  \
+  LOG_EVENT("block_orphaned",                               \
+    LOG_FIELD("node",            (uint64_t)(node))          \
+    LOG_FIELD("block",           (uint64_t)(block))         \
+    LOG_FIELD("missing_parents", (missing_parents))         \
+  )
+
+#define EVENT_BLOCK_UNORPHANED(node, block)  \
+  LOG_EVENT("block_unorphaned",              \
+    LOG_FIELD("node",  (uint64_t)(node))     \
+    LOG_FIELD("block", (uint64_t)(block))    \
+  )
+
+#define EVENT_BLOCK_COLORED(node, block, is_blue, blue_score, dag_width)  \
+  LOG_EVENT("block_colored",                                              \
+    LOG_FIELD("node",       (uint64_t)(node))                             \
+    LOG_FIELD("block",      (uint64_t)(block))                            \
+    LOG_FIELD("is_blue",    (bool)(is_blue))                              \
+    LOG_FIELD("blue_score", (uint64_t)(blue_score))                       \
+    LOG_FIELD("dag_width",  (uint64_t)(dag_width))                        \
+  )
+
+// --- Network messages -------------------------------------------------------
+
+#define EVENT_MSG_SENT(node, peer, msg_type, block, bytes)  \
+  LOG_EVENT("msg_sent",                                     \
+    LOG_FIELD("node",     (uint64_t)(node))                 \
+    LOG_FIELD("peer",     (std::string)(peer))              \
+    LOG_FIELD("msg_type", (std::string)(msg_type))          \
+    LOG_FIELD("block",    (uint64_t)(block))                \
+    LOG_FIELD("bytes",    (uint32_t)(bytes))                \
+  )
+
+#define EVENT_MSG_RECV(node, peer, msg_type, block, bytes)  \
+  LOG_EVENT("msg_recv",                                     \
+    LOG_FIELD("node",     (uint64_t)(node))                 \
+    LOG_FIELD("peer",     (std::string)(peer))              \
+    LOG_FIELD("msg_type", (std::string)(msg_type))          \
+    LOG_FIELD("block",    (uint64_t)(block))                \
+    LOG_FIELD("bytes",    (uint32_t)(bytes))                \
+  )
+
+// --- Transactions -----------------------------------------------------------
+
+#define EVENT_TX_GENERATED(node, tx_id, fee)  \
+  LOG_EVENT("tx_generated",                   \
+    LOG_FIELD("node",  (uint64_t)(node))      \
+    LOG_FIELD("tx_id", (uint64_t)(tx_id))     \
+    LOG_FIELD("fee",   (uint32_t)(fee))       \
+  )
+
+#define EVENT_TX_CONFIRMED(node, tx_id, block, gen_t, is_blue)  \
+  LOG_EVENT("tx_confirmed",                                      \
+    LOG_FIELD("node",    (uint64_t)(node))                       \
+    LOG_FIELD("tx_id",   (uint64_t)(tx_id))                      \
+    LOG_FIELD("block",   (uint64_t)(block))                      \
+    LOG_FIELD("gen_t",   (double)(gen_t))                        \
+    LOG_FIELD("latency", ns3::Simulator::Now().GetSeconds()      \
+                           - (double)(gen_t))                    \
+    LOG_FIELD("is_blue", (bool)(is_blue))                        \
+  )
+
+// --- Graphene ---------------------------------------------------------------
+
+#define EVENT_GRAPHENE_REQ_SENT(node, block, peer)  \
+  LOG_EVENT("graphene_req_sent",                    \
+    LOG_FIELD("node",  (uint64_t)(node))            \
+    LOG_FIELD("block", (uint64_t)(block))           \
+    LOG_FIELD("peer",  (std::string)(peer))         \
+  )
+
+#define EVENT_GRAPHENE_BLOCK_RECV(node, block, iblt_ok,       \
+                                  bytes_total, bytes_saved)   \
+  LOG_EVENT("graphene_block_recv",                            \
+    LOG_FIELD("node",         (uint64_t)(node))               \
+    LOG_FIELD("block",        (uint64_t)(block))              \
+    LOG_FIELD("iblt_success", (bool)(iblt_ok))                \
+    LOG_FIELD("bytes_total",  (uint32_t)(bytes_total))        \
+    LOG_FIELD("bytes_saved",  (uint32_t)(bytes_saved))        \
+  )
+
+#define EVENT_GRAPHENE_FALLBACK(node, block, missing_count)  \
+  LOG_EVENT("graphene_fallback",                             \
+    LOG_FIELD("node",          (uint64_t)(node))             \
+    LOG_FIELD("block",         (uint64_t)(block))            \
+    LOG_FIELD("missing_count", (uint32_t)(missing_count))    \
+  )
+
+// --- Compact blocks ---------------------------------------------------------
+
+#define EVENT_COMPACT_SENT(node, block, peer,           \
+                           full_txs, short_ids, bytes)  \
+  LOG_EVENT("compact_sent",                             \
+    LOG_FIELD("node",      (uint64_t)(node))            \
+    LOG_FIELD("block",     (uint64_t)(block))           \
+    LOG_FIELD("peer",      (std::string)(peer))         \
+    LOG_FIELD("full_txs",  (uint32_t)(full_txs))        \
+    LOG_FIELD("short_ids", (uint32_t)(short_ids))       \
+    LOG_FIELD("bytes",     (uint32_t)(bytes))           \
+  )
+
+#define EVENT_COMPACT_MISSING(node, block, missing_count)  \
+  LOG_EVENT("compact_missing",                             \
+    LOG_FIELD("node",          (uint64_t)(node))           \
+    LOG_FIELD("block",         (uint64_t)(block))          \
+    LOG_FIELD("missing_count", (uint32_t)(missing_count))  \
+  )

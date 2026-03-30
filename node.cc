@@ -430,13 +430,8 @@ void GhostDagNode::HandleInvRelayBlock(const std::string &block_hash,
                                        Address &from) {
   uint64_t block_id = std::stoul(block_hash);
   if (m_blockchain.HasBlock(block_id) || m_blockchain.IsOrphan(block_id)) {
-    METRIC_REDUNDANT_MSG(NID, block_id, "INV_RELAY_BLOCK", IPV4_STR(from),
-                         block_hash.size(), NOW);
     return;
   }
-
-  METRIC_MSG(NID, block_id, "INV_RELAY_BLOCK", IPV4_STR(from),
-             block_hash.size(), NOW);
 
   bool first_announcement = m_queue_inv[block_hash].empty();
   m_queue_inv[block_hash].push_back(from);
@@ -491,23 +486,28 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
   block.time_received = currentTime;
   InetSocketAddress peer = InetSocketAddress::ConvertFrom(from);
   block.received_from = peer.GetIpv4();
-  METRIC_MSG(NID, new_block.header.block_id, "BLOCK", IPV4_STR(from),
-             new_block.GetTotalSize(), NOW);
+
   if (m_blockchain.HasBlock(new_block.header.block_id) ||
       m_blockchain.IsOrphan(new_block.header.block_id)) {
-    METRIC_REDUNDANT_MSG(NID, new_block.header.block_id, "BLOCK",
-                         IPV4_STR(from), new_block.GetTotalSize(), NOW);
     return; // should never happen for first annouce rule
   }
+
+  uint32_t already_known_txs = 0;
 
   for (const auto &tx : block.transactions) {
     uint32_t miner_id = IdFromTxId(tx.tx_id);
     HtabIterator it = m_mempool.find(miner_id, tx.tx_id);
     if (it.isValid()) {
       m_mempool.eraseTransaction(it);
+      already_known_txs++;
     }
     m_known_txs.insert(tx.tx_id);
   }
+
+  EVENT_BLOCK_RECEIVED(NID, new_block.header.block_id, IPV4_STR(from),
+                       new_block.GetTotalSize(), new_block.transactions.size(),
+                       already_known_txs,
+                       new_block.header.parent_hashes.size());
 
   std::string blockHash = std::to_string(new_block.header.block_id);
   auto timeout_it = m_inv_timeouts.find(blockHash);
@@ -519,29 +519,11 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
 
   m_blockchain.AddBlock(block);
 
-#ifdef GHOSTDAGSIM_METRICS
-  if (!m_blockchain.IsOrphan(block.header.block_id)) {
-    const Block &b = m_blockchain.blocks.at(block.header.block_id);
-    METRIC_BLOCK_COLORED(GetNode()->GetId(), block.header.block_id, b.is_blue,
-                         b.blue_score, b.blue_set.size(), b.selected_parent,
-                         NOW);
-  }
-#endif
-
-  METRIC_BLOCK_RECEIVED(
-      NID, block.header.block_id, (uint32_t)block.header.miner_id,
-      block.header.time_created, currentTime, IPV4_STR(from), true);
-
   uint64_t blue = 0;
   uint64_t red = 0;
   for (const auto &[id, blk] : m_blockchain.blocks) {
     blk.is_blue ? ++blue : ++red;
   }
-  METRIC_DAG_SNAPSHOT(NID, m_blockchain.blocks.size(), blue, red,
-                      m_blockchain.orphans.size(), m_blockchain.GetDagWidth(),
-                      NOW);
-
-  METRIC_BLOCK_COVERAGE(block.header.block_id, block.header.time_created, NOW);
   BroadcastInvBlock(blockHash, peer.GetIpv4());
 }
 
@@ -611,12 +593,8 @@ void GhostDagNode::HandleInvTransactions(
     uint64_t tx_id = std::stoull(hash);
 
     if (m_known_txs.count(tx_id)) {
-      METRIC_REDUNDANT_MSG(NID, tx_id, "INV_RELAY_TRANSACTION", IPV4_STR(from),
-                           hash.size(), NOW);
       continue;
     }
-    METRIC_MSG(NID, tx_id, "INV_RELAY_TRANSACTION", IPV4_STR(from), hash.size(),
-               NOW);
 
     bool first_announcement = m_queue_inv_tx[hash].empty();
     m_queue_inv_tx[hash].push_back(from);
@@ -822,7 +800,6 @@ void GhostDagNode::GenerateTransaction() {
 
     NS_LOG_DEBUG("Node " << GetNode()->GetId() << " generated tx " << txId
                          << " fee=" << fee);
-    METRIC_TX_GENERATED(NID, txId, fee, NOW);
   } else {
     NS_LOG_DEBUG("Node " << GetNode()->GetId() << " mempool full");
   }

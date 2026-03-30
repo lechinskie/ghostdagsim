@@ -172,10 +172,7 @@ void GhostDagMiner::MineBlock() {
                        << newBlock.header.parent_hashes.size() << " parents");
 
   std::string blockHash = std::to_string(newBlock.header.block_id);
-  METRIC_BLOCK_MINED(NID, newBlock.header.block_id,
-                     newBlock.header.parent_hashes.size(),
-                     m_blockchain.GetDagWidth(), newBlock.transactions.size(),
-                     newBlock.GetTotalSize(), NOW);
+
   BroadcastInvBlock(blockHash);
 
   m_averageBlockGenInterval =
@@ -210,7 +207,6 @@ std::set<Transaction> GhostDagMiner::SelectTransactions(uint64_t bid) {
         tx.size_bytes = 522;
         tx.fee = it.iterator->fee;
         selected.insert(tx);
-        METRIC_TX_CONFIRMED(NID, tx.tx_id, bid, tx.fee, NOW);
         m_mempool.eraseTransaction(it);
       }
     }
