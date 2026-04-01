@@ -82,6 +82,7 @@ int main(int argc, char *argv[]) {
   std::map<uint32_t, std::map<Ipv4Address, double>> peersUploadSpeeds;
   std::map<uint32_t, NodeInternetSpeeds> nodesInternetSpeeds;
   std::vector<uint32_t> miners;
+  bool graphene = false;
 
   enum Region *minersRegions;
   int *minersStrategies;
@@ -114,6 +115,7 @@ int main(int argc, char *argv[]) {
                targetBlocksPerMiner);
   cmd.AddValue("run_name", "Name tag for this simulation run",
                metrics_scenario);
+  cmd.AddValue("graphene", "Use graphene relay handler", graphene);
   cmd.Parse(argc, argv);
 
   if (noMiners > totalNoNodes) {
@@ -223,6 +225,7 @@ int main(int argc, char *argv[]) {
       minerHelper.SetAttribute("TxFeeLambda", DoubleValue(txFeeLambda));
 
       minerHelper.SetAttribute("TxGenInterval", DoubleValue(txGenInterval));
+      minerHelper.SetAttribute("GrapheneEnabled", BooleanValue(graphene));
 
       ghostdagMiners.Add(minerHelper.Install(targetNode));
     }
@@ -247,6 +250,7 @@ int main(int argc, char *argv[]) {
         nodeHelper.SetAttribute("MempoolSize", UintegerValue(mempoolSize));
         nodeHelper.SetAttribute("TxFeeLambda", DoubleValue(txFeeLambda));
         nodeHelper.SetAttribute("TxGenInterval", DoubleValue(txGenInterval));
+        nodeHelper.SetAttribute("GrapheneEnabled", BooleanValue(graphene));
 
         ghostdagNodes.Add(nodeHelper.Install(targetNode));
       }

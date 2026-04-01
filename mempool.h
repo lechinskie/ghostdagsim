@@ -192,4 +192,10 @@ public:
    * @return Iterator to inserted item
    */
   HtabIterator insert(uint32_t minerId, uint64_t txId, uint32_t fee);
+
+  /**
+   * @brief Collect all (minerId, txId) pairs currently in the mempool.
+   *        Used by Graphene to build the candidate set.
+   */
+  std::vector<std::pair<uint32_t, uint64_t>> getAllEntries() const;
 };

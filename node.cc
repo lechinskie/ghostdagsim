@@ -23,9 +23,12 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+#include <stdexcept>
+#define IBLT_IMPL
 #include "node.h"
 
 #include "dag.h"
+#include "graphene.h"
 #include "metrics.h"
 #include "thirdparty/json.h"
 
@@ -105,6 +108,12 @@ TypeId GhostDagNode::GetTypeId() {
               DoubleValue(0.1),
               MakeDoubleAccessor(&GhostDagNode::m_txGenInterval),
               MakeDoubleChecker<double>())
+          .AddAttribute(
+              "GrapheneEnabled",
+              "Use Graphene compact block relay instead of full block relay",
+              BooleanValue(false),
+              MakeBooleanAccessor(&GhostDagNode::m_graphene_enabled),
+              MakeBooleanChecker())
           .AddTraceSource("Rx", "A packet has been received",
                           MakeTraceSourceAccessor(&GhostDagNode::m_rx_trace),
                           "ns3::Packet::AddressTracedCallback");
@@ -113,9 +122,9 @@ TypeId GhostDagNode::GetTypeId() {
 
 GhostDagNode::GhostDagNode()
     : m_mempool(10000), m_average_transaction_size(522.4),
-      m_transaction_index_size(2), m_generateTransactions(true),
-      m_txGenInterval(0.1), m_txFeeLambda(150.0), m_mempoolSize(10000),
-      m_txFeeDistribution(1 / 150.0), m_txsGenerated(0) {
+      m_transaction_index_size(2), m_graphene_enabled(false),
+      m_generateTransactions(true), m_txGenInterval(0.1), m_txFeeLambda(150.0),
+      m_mempoolSize(10000), m_txFeeDistribution(1 / 150.0), m_txsGenerated(0) {
   NS_LOG_FUNCTION(this);
   m_socket = nullptr;
 
@@ -342,7 +351,8 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
     auto data = nlohmann::json::parse(payload);
     if (data.contains("block_hash")) {
       std::string block_hash = data["block_hash"];
-      HandleReqRelayBlock(block_hash, from);
+      bool graphene_failed = data.value("graphene_failed", false);
+      HandleReqRelayBlock(block_hash, graphene_failed, from);
     }
     break;
   }
@@ -373,6 +383,12 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
 
       HandleBlock(newBlock, from);
     }
+    break;
+  }
+  case GRAPHENE_BLOCK: {
+    NS_LOG_INFO("Node " << GetNode()->GetId() << " received GRAPHENE_BLOCK");
+    auto data = nlohmann::json::parse(payload);
+    HandleGrapheneBlock(data, from);
     break;
   }
   case INV_TRANSACTIONS: {
@@ -415,13 +431,13 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
     HandleTransactions(txs, from);
     break;
   }
+
   default:
     NS_LOG_ERROR("Node: " << GetNode()->GetId()
                           << " Received not know message: " << payload);
     break;
   }
 }
-
 /*
  * Block Handling Logic
  * */
@@ -439,6 +455,9 @@ void GhostDagNode::HandleInvRelayBlock(const std::string &block_hash,
   if (first_announcement) {
     nlohmann::json req;
     req["block_hash"] = block_hash;
+    if (m_graphene_enabled) {
+      req["mempool_count"] = static_cast<uint64_t>(m_mempool.size());
+    }
     SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, req.dump(), from);
 
     m_inv_timeouts[block_hash] =
@@ -448,34 +467,71 @@ void GhostDagNode::HandleInvRelayBlock(const std::string &block_hash,
 }
 
 void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
-                                       Address &from) {
+                                       bool graphene_failed, Address &from) {
   NS_LOG_FUNCTION(this << block_hash);
 
   uint64_t block_id = std::stoul(block_hash);
 
-  if (m_blockchain.HasBlock(block_id)) {
-    const Block &block = m_blockchain.blocks.at(block_id);
-
-    nlohmann::json blockMsg;
-    blockMsg["block"]["block_id"] = block.header.block_id;
-    blockMsg["block"]["miner_id"] = block.header.miner_id;
-    blockMsg["block"]["time_created"] = block.header.time_created;
-    blockMsg["block"]["parent_hashes"] = nlohmann::json::array();
-    for (uint64_t parent : block.header.parent_hashes) {
-      blockMsg["block"]["parent_hashes"].push_back(parent);
-    }
-
-    blockMsg["block"]["transactions"] = nlohmann::json::array();
-    for (const auto &tx : block.transactions) {
-      nlohmann::json txJson;
-      txJson["tx_id"] = tx.tx_id;
-      txJson["size_bytes"] = tx.size_bytes;
-      txJson["fee"] = tx.fee;
-      blockMsg["block"]["transactions"].push_back(txJson);
-    }
-
-    SendMessage(NO_MESSAGE, BLOCK, blockMsg.dump(), from);
+  if (!m_blockchain.HasBlock(block_id)) {
+    return;
   }
+
+  const Block &block = m_blockchain.blocks.at(block_id);
+
+  // If graphene is enabled and the request included a mempool count, send a
+  // compact graphene block instead of the full block.
+  if (m_graphene_enabled && !graphene_failed) {
+    // Build graphene components
+    bloom_filter bf{bloom_parameters()};
+    IBLT iblt(1, GrapheneProtocol::IBLT_VALUE_SIZE);
+    auto mempool_entries = m_mempool.getAllEntries();
+
+    GrapheneProtocol::BuildSenderComponents(block.transactions, mempool_entries,
+                                            bf, iblt);
+
+    uint64_t tx_checksum = 0;
+    for (const auto &tx : block.transactions) {
+      tx_checksum ^= tx.tx_id;
+    }
+
+    nlohmann::json gm;
+    gm["block_hash"] = block_hash;
+    gm["block_id"] = block.header.block_id;
+    gm["miner_id"] = block.header.miner_id;
+    gm["time_created"] = block.header.time_created;
+    gm["parent_hashes"] = nlohmann::json::array();
+    for (uint64_t parent : block.header.parent_hashes) {
+      gm["parent_hashes"].push_back(parent);
+    }
+    gm["tx_count"] = block.transactions.size();
+    gm["bloom_filter"] = GrapheneProtocol::SerializeBloomFilter(bf);
+    gm["iblt"] = GrapheneProtocol::SerializeIBLT(iblt);
+    gm["tx_checksum"] = tx_checksum;
+
+    SendMessage(NO_MESSAGE, GRAPHENE_BLOCK, gm.dump(), from);
+    return;
+  }
+
+  // Fallback: send full block
+  nlohmann::json blockMsg;
+  blockMsg["block"]["block_id"] = block.header.block_id;
+  blockMsg["block"]["miner_id"] = block.header.miner_id;
+  blockMsg["block"]["time_created"] = block.header.time_created;
+  blockMsg["block"]["parent_hashes"] = nlohmann::json::array();
+  for (uint64_t parent : block.header.parent_hashes) {
+    blockMsg["block"]["parent_hashes"].push_back(parent);
+  }
+
+  blockMsg["block"]["transactions"] = nlohmann::json::array();
+  for (const auto &tx : block.transactions) {
+    nlohmann::json txJson;
+    txJson["tx_id"] = tx.tx_id;
+    txJson["size_bytes"] = tx.size_bytes;
+    txJson["fee"] = tx.fee;
+    blockMsg["block"]["transactions"].push_back(txJson);
+  }
+
+  SendMessage(NO_MESSAGE, BLOCK, blockMsg.dump(), from);
 }
 
 void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
@@ -526,6 +582,71 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
   }
   BroadcastInvBlock(blockHash, peer.GetIpv4());
 }
+
+// =========================================================================
+//  Graphene block propagation
+// =========================================================================
+
+void GhostDagNode::HandleGrapheneBlock(const nlohmann::json &data,
+                                       Address &from) {
+  std::string block_hash = data["block_hash"].get<std::string>();
+  NS_LOG_FUNCTION(this << block_hash);
+
+  uint64_t block_id = data["block_id"].get<uint64_t>();
+
+  if (m_blockchain.HasBlock(block_id) || m_blockchain.IsOrphan(block_id))
+    return;
+
+  // Deserialize bloom filter and IBLT
+  bloom_filter bf =
+      GrapheneProtocol::DeserializeBloomFilter(data["bloom_filter"]);
+  IBLT iblt = GrapheneProtocol::DeserializeIBLT(data["iblt"]);
+  size_t tx_count = data["tx_count"].get<size_t>();
+
+  // Try Protocol 1
+  std::set<Transaction> recovered_txs;
+  auto status = GrapheneProtocol::ReconstructBlock(
+      bf, iblt, tx_count, m_mempool.getAllEntries(), recovered_txs);
+
+  if (status == GrapheneProtocol::DecodeStatus::SUCCESS) {
+    // Build the Block from header + recovered transactions
+    Block block;
+    block.header.block_id = data["block_id"].get<uint64_t>();
+    block.header.miner_id = data["miner_id"].get<uint64_t>();
+    block.header.time_created = data["time_created"].get<double>();
+    if (data.contains("parent_hashes")) {
+      for (auto &ph : data["parent_hashes"])
+        block.header.parent_hashes.push_back(ph.get<uint64_t>());
+    }
+    block.transactions = recovered_txs;
+    block.size_in_bytes = block.GetTotalSize();
+
+    uint64_t recovered_checksum = 0;
+    for (const auto &tx : recovered_txs) {
+      recovered_checksum ^= tx.tx_id;
+    }
+
+    __ASSERT__(
+        recovered_checksum == data["tx_checksum"].get<uint64_t>(),
+        "tx_checksum received from peer is different from reconstructed on "
+        "graphene");
+
+    HandleBlock(block, from);
+    EVENT_BLOCK_GRAPHENE_SUCCESS(NID, block.header.block_id, IPV4_STR(from));
+    return;
+  }
+
+  EVENT_BLOCK_GRAPHENE_FALLBACK(NID, data["block_id"], IPV4_STR(from));
+
+  // Protocol 1 failed — request full block (actual implementation would start
+  // thinblock, protocol 2 was never implemented)
+  nlohmann::json msg;
+  msg["block_hash"] = block_hash;
+  msg["graphene_failed"] = true;
+  SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, msg.dump(), from);
+}
+
+// =========================================================================
 
 void GhostDagNode::InvTimeoutExpired(std::string block_hash) {
   NS_LOG_FUNCTION(this << block_hash);

@@ -135,6 +135,20 @@ private:
     LOG_FIELD("parent_count",  (uint32_t)(parent_count))               \
   )
 
+#define EVENT_BLOCK_GRAPHENE_FALLBACK(node, block, from)               \
+  LOG_EVENT("block_graphene_fallback",                                 \
+    LOG_FIELD("node",          (uint64_t)(node))                       \
+    LOG_FIELD("block",         (uint64_t)(block))                      \
+    LOG_FIELD("from",          (std::string)(from))                    \
+  )
+
+#define EVENT_BLOCK_GRAPHENE_SUCCESS(node, block, from)                \
+  LOG_EVENT("block_graphene_success",                                  \
+    LOG_FIELD("node",          (uint64_t)(node))                       \
+    LOG_FIELD("block",         (uint64_t)(block))                      \
+    LOG_FIELD("from",          (std::string)(from))                    \
+  )
+
 #define EVENT_BLOCK_ORPHANED(node, block, missing_parents)  \
   LOG_EVENT("block_orphaned",                               \
     LOG_FIELD("node",            (uint64_t)(node))          \

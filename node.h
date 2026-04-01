@@ -1,5 +1,5 @@
 /**
- * @file node.cc
+ * @file node.h
  * @brief GhostDAG node and network handling ns3 application definition
  *
  * Architecture inspired by Bitcoin-Simulator by Arthur Gervais et al.
@@ -26,6 +26,7 @@
 #pragma once
 
 #include "dag.h"
+#include "graphene.h"
 #include "mempool.h"
 
 #include "ns3/application.h"
@@ -62,7 +63,6 @@ protected:
 
   // --- Socket & Connection Handling ---
   void HandleRead(Ptr<Socket> socket);
-
   void HandleAccept(Ptr<Socket> socket, const Address &from);
   void HandlePeerClose(Ptr<Socket> socket);
   void HandlePeerError(Ptr<Socket> socket);
@@ -75,10 +75,22 @@ protected:
   void ProcessMessage(enum Messages msg_type, std::string payload,
                       Address &from);
 
-  // --- 1. Real-Time Propagation Handlers  ---
+  // --- 1. Real-Time Propagation Handlers ---
   void HandleInvRelayBlock(const std::string &block_hash, Address &from);
-  void HandleReqRelayBlock(const std::string &block_hash, Address &from);
+  void HandleReqRelayBlock(const std::string &block_hash, bool graphene,
+                           Address &from);
   void HandleBlock(const Block &new_block, Address &from);
+
+  // --- 1b. Graphene propagation handlers ---
+  void HandleGrapheneBlock(const nlohmann::json &data, Address &from);
+
+  // Graphene state per in-flight block
+  struct GrapheneState {
+    BlockHeader header;
+    size_t tx_count;
+    std::set<uint64_t> candidate_ids;
+  };
+  std::map<std::string, GrapheneState> m_graphene_state;
 
   // --- 2. Mempool management ---
   void HandleInvTransactions(const std::vector<std::string> &tx_hashes,
@@ -92,7 +104,6 @@ protected:
                    Address &to);
   void BroadcastInvBlock(const std::string &block_hash,
                          Ipv4Address exclude = Ipv4Address());
-
   void BroadcastInvTransactions(const std::vector<std::string> &,
                                 Ipv4Address = Ipv4Address());
   void FlushInvBatch(Ipv4Address exclude);
@@ -107,36 +118,40 @@ protected:
   // --- Timeout & Queue Management ---
   void InvTimeoutExpired(std::string block_hash);
 
+  // --- Sockets ---
   Ptr<Socket> m_socket;
   Address m_local;
   TypeId m_tid;
 
-  // Core Structures
+  // --- Core Structures ---
   Blockchain m_blockchain;
   Mempool m_mempool;
   Time m_inv_timeout_minutes;
   double m_fixed_block_interval;
 
-  // Network Params
+  // --- Network Params ---
   double m_download_speed;
   double m_upload_speed;
   double m_average_transaction_size;
   int m_transaction_index_size;
 
-  // Connectivity Maps
+  // --- Connectivity Maps ---
   std::vector<Ipv4Address> m_peers_addresses;
   std::map<Ipv4Address, double> m_peers_download_speeds;
   std::map<Ipv4Address, double> m_peers_upload_speeds;
   std::map<Ipv4Address, Ptr<Socket>> m_peers_sockets;
   std::map<Ptr<Socket>, Ipv4Address> m_socket_to_peer;
 
-  // State Maps
+  // --- Block-propagation State ---
   std::map<std::string, std::vector<Address>> m_queue_inv;
   std::map<std::string, EventId> m_inv_timeouts;
   std::map<Address, std::string> m_buffered_data;
   std::map<std::string, Block> m_only_headers_received;
   std::map<Ipv4Address, std::vector<std::string>> m_pending_messages;
 
+  bool m_graphene_enabled;
+
+  // --- Port / Sizes ---
   int m_ghostdag_port;
   uint8_t m_ghostdag_k;
   int m_seconds_per_min;
@@ -144,7 +159,7 @@ protected:
   int m_inventory_size;
   int m_headers_size;
 
-  // Transaction generation
+  // --- Transaction Generation ---
   bool m_generateTransactions;
   double m_txGenInterval;
   double m_txFeeLambda;

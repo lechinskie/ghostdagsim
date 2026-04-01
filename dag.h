@@ -37,6 +37,24 @@
     InetSocketAddress::ConvertFrom((from)).GetIpv4().Print(ss);                \
     return ss.str();                                                           \
   }())
+inline void __ASSERT_HANDLE(const char *expression, const char *file, int line,
+                            const char *message = nullptr) {
+  std::cerr << "Assertion Failed Error!\n";
+  std::cerr << "  Expression: [" << expression << "]\n";
+  std::cerr << "  File:       " << file << "\n";
+  std::cerr << "  Line:       " << line << "\n";
+  if (message) {
+    std::cerr << "  Message:    " << message << "\n";
+  }
+
+  std::abort();
+}
+#define __ASSERT__(expr, msg)                                                  \
+  do {                                                                         \
+    if (!(expr)) {                                                             \
+      __ASSERT_HANDLE(#expr, __FILE__, __LINE__, msg);                         \
+    }                                                                          \
+  } while (false)
 
 typedef struct {
   double download_speed;
@@ -66,6 +84,8 @@ enum Messages {
 
   BLOCK,
 
+  GRAPHENE_BLOCK,
+
   INV_TRANSACTIONS,
   REQ_TRANSACTIONS,
   TRANSACTIONS,
@@ -89,6 +109,8 @@ inline static std::string GetMessageName(Messages msg) {
     return "REQ_RELAY_BLOCK";
   case BLOCK:
     return "BLOCK";
+  case GRAPHENE_BLOCK:
+    return "GRAPHENE_BLOCK";
   case INV_TRANSACTIONS:
     return "INV_TRANSACTIONS";
   case REQ_TRANSACTIONS:
@@ -117,8 +139,8 @@ struct BlockHeader {
   BlockHeader() : block_id(0), miner_id(0), time_created(0) {}
 
   int GetSizeInBytes() const {
-    int base_size = 80; // Standard 80-byte header approximation
-    int parent_size = parent_hashes.size() * 32; // 32 bytes per hash
+    int base_size = 80;
+    int parent_size = parent_hashes.size() * 32;
 
     int varint_size = 1;
     if (parent_hashes.size() >= 253) {
@@ -134,7 +156,6 @@ struct Block {
   std::set<Transaction> transactions;
   int size_in_bytes;
 
-  // just metrics porpouse, not part of packet
   double time_received;
   ns3::Ipv4Address received_from;
   uint64_t blue_score;

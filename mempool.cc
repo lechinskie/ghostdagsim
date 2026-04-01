@@ -263,6 +263,17 @@ void Mempool::clear() {
   itemCount = 0;
 }
 
+std::vector<std::pair<uint32_t, uint64_t>> Mempool::getAllEntries() const {
+  std::vector<std::pair<uint32_t, uint64_t>> entries;
+  entries.reserve(itemCount);
+  for (const auto &bucket : htabItems) {
+    for (const auto &item : bucket) {
+      entries.emplace_back(static_cast<uint32_t>(item.txId >> 32), item.txId);
+    }
+  }
+  return entries;
+}
+
 HtabIterator Mempool::insert(uint32_t minerId, uint64_t txId, uint32_t fee) {
   std::string key =
       std::to_string(minerId).append(".").append(std::to_string(txId));
