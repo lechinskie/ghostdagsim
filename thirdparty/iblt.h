@@ -146,7 +146,6 @@ public:
   size_t valueSize;
   size_t numHashes;
 
-private:
   struct HashTableEntry {
     int32_t count = 0;
     uint64_t keySum = 0;

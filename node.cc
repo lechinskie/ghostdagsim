@@ -23,7 +23,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-#include <stdexcept>
 #define IBLT_IMPL
 #include "node.h"
 
@@ -391,6 +390,17 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type, std::string payload,
     HandleGrapheneBlock(data, from);
     break;
   }
+  case GRAPHENE_RECOVERY_REQUEST:
+    NS_LOG_INFO("Node " << GetNode()->GetId()
+                        << " received GRAPHENE_RECOVERY_REQUEST");
+    HandleGrapheneRecoveryRequest(nlohmann::json::parse(payload), from);
+    break;
+
+  case GRAPHENE_RECOVERY_RESPONSE:
+    NS_LOG_INFO("Node " << GetNode()->GetId()
+                        << " received GRAPHENE_RECOVERY_RESPONSE");
+    HandleGrapheneRecoveryResponse(nlohmann::json::parse(payload), from);
+    break;
   case INV_TRANSACTIONS: {
     NS_LOG_INFO("Node " << GetNode()->GetId() << " received INV_TRANSACTIONS");
     auto data = nlohmann::json::parse(payload);
@@ -507,6 +517,7 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
     gm["bloom_filter"] = GrapheneProtocol::SerializeBloomFilter(bf);
     gm["iblt"] = GrapheneProtocol::SerializeIBLT(iblt);
     gm["tx_checksum"] = tx_checksum;
+    gm["fpr"] = bf.effective_fpp();
 
     SendMessage(NO_MESSAGE, GRAPHENE_BLOCK, gm.dump(), from);
     return;
@@ -625,6 +636,11 @@ void GhostDagNode::HandleGrapheneBlock(const nlohmann::json &data,
     for (const auto &tx : recovered_txs) {
       recovered_checksum ^= tx.tx_id;
     }
+    GrapheneState state;
+    state.header = block.header;
+    state.tx_count = tx_count;
+    state.sender_bloom = bf;
+    state.sender_iblt = iblt;
 
     __ASSERT__(
         recovered_checksum == data["tx_checksum"].get<uint64_t>(),
@@ -636,16 +652,134 @@ void GhostDagNode::HandleGrapheneBlock(const nlohmann::json &data,
     return;
   }
 
-  EVENT_BLOCK_GRAPHENE_FALLBACK(NID, data["block_id"], IPV4_STR(from));
+  auto &state = m_graphene_state[block_hash];
 
-  // Protocol 1 failed — request full block (actual implementation would start
-  // thinblock, protocol 2 was never implemented)
+  state.candidate_ids.clear();
+
+  std::vector<uint64_t> Z;
+
+  for (const auto &entry : m_mempool.getAllEntries()) {
+    auto txid = entry.second;
+    if (bf.contains(txid)) {
+      Z.push_back(txid);
+      state.candidate_ids.insert(txid);
+    }
+  }
+
+  bloom_filter rbf;
+  int b;
+  int y_star;
+  GrapheneProtocol::BuildRecoveryBloom(Z, m_mempool.size(), tx_count,
+                                       data["fpr"], rbf, b, y_star);
+  nlohmann::json req;
+
+  req["block_hash"] = block_hash;
+  req["b"] = b;
+  req["y_star"] = y_star;
+  req["receiver_bloom"] = GrapheneProtocol::SerializeBloomFilter(rbf);
+
+  SendMessage(GRAPHENE_RECOVERY_REQUEST, GRAPHENE_RECOVERY_REQUEST, req.dump(),
+              from);
+
+  state.waiting_protocol2 = true;
+}
+
+void GhostDagNode::HandleGrapheneRecoveryRequest(const nlohmann::json &data,
+                                                 Address &from) {
+
+  std::string block_hash = data["block_hash"];
+
+  int b = data["b"];
+  int y_star = data["y_star"];
+
+  bloom_filter receiver_bloom =
+      GrapheneProtocol::DeserializeBloomFilter(data["receiver_bloom"]);
+
+  uint64_t block_id = std::stoull(block_hash);
+
+  if (!m_blockchain.HasBlock(block_id)) {
+    return;
+  }
+
+  const Block &blk = m_blockchain.blocks.at(block_id);
+
+  std::vector<uint64_t> missing;
+
+  IBLT sender_second_iblt =
+      GrapheneProtocol::SecondIBLT(blk, receiver_bloom, y_star, b, missing);
+
+  nlohmann::json resp;
+  uint64_t tx_checksum = 0;
+  for (const auto &tx : blk.transactions) {
+    tx_checksum ^= tx.tx_id;
+  }
+
+  resp["block_hash"] = block_hash;
+  resp["tx_checksum"] = tx_checksum;
+  resp["iblt"] = GrapheneProtocol::SerializeIBLT(sender_second_iblt);
+
+  resp["missing"] = missing;
+
+  SendMessage(GRAPHENE_RECOVERY_RESPONSE, GRAPHENE_RECOVERY_RESPONSE,
+              resp.dump(), from);
+}
+
+void GhostDagNode::HandleGrapheneRecoveryResponse(const nlohmann::json &data,
+                                                  Address &from) {
+
+  std::string block_hash = data["block_hash"];
+
+  auto it = m_graphene_state.find(block_hash);
+
+  if (it == m_graphene_state.end()) {
+    return;
+  }
+  auto &state = it->second;
+
+  std::set<uint64_t> Z = state.candidate_ids;
+
+  GrapheneProtocol::DecodeStatus status =
+      GrapheneProtocol::ReconstructRecoveryBlock(data, Z);
+
+  if (status == GrapheneProtocol::DecodeStatus::SUCCESS) {
+    Block recovered;
+    recovered.header = state.header;
+
+    for (auto txid : Z) {
+      auto txit = m_mempool.find(IdFromTxId(txid), txid).iterator;
+      Transaction tx;
+      tx.fee = txit->fee;
+      tx.tx_id = txit->txId;
+      tx.size_bytes = 522;
+      recovered.transactions.insert(tx);
+    }
+
+    uint64_t recovered_checksum = 0;
+    for (const auto &tx : Z) {
+      recovered_checksum ^= tx;
+    }
+
+    __ASSERT__(
+        recovered_checksum == data["tx_checksum"].get<uint64_t>(),
+        "tx_checksum received from peer is different from reconstructed on "
+        "graphene protocol 2");
+
+    m_blockchain.AddBlock(recovered);
+
+    m_graphene_state.erase(it);
+    EVENT_BLOCK_GRAPHENE_SUCCESS2(NID, recovered.header.block_id,
+                                  IPV4_STR(from));
+    return;
+  }
+
+  EVENT_BLOCK_GRAPHENE_FALLBACK(NID, state.header.block_id, IPV4_STR(from));
+
+  // Protocol 2 failed — request full block
   nlohmann::json msg;
   msg["block_hash"] = block_hash;
   msg["graphene_failed"] = true;
   SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, msg.dump(), from);
 }
-
 // =========================================================================
 
 void GhostDagNode::InvTimeoutExpired(std::string block_hash) {

@@ -148,6 +148,12 @@ private:
     LOG_FIELD("block",         (uint64_t)(block))                      \
     LOG_FIELD("from",          (std::string)(from))                    \
   )
+#define EVENT_BLOCK_GRAPHENE_SUCCESS2(node, block, from)                \
+  LOG_EVENT("block_graphene_success_prot2",                                  \
+    LOG_FIELD("node",          (uint64_t)(node))                       \
+    LOG_FIELD("block",         (uint64_t)(block))                      \
+    LOG_FIELD("from",          (std::string)(from))                    \
+  )
 
 #define EVENT_BLOCK_ORPHANED(node, block, missing_parents)  \
   LOG_EVENT("block_orphaned",                               \

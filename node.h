@@ -83,12 +83,22 @@ protected:
 
   // --- 1b. Graphene propagation handlers ---
   void HandleGrapheneBlock(const nlohmann::json &data, Address &from);
+  void HandleGrapheneRecoveryRequest(const nlohmann::json &data, Address &from);
+
+  void HandleGrapheneRecoveryResponse(const nlohmann::json &data,
+                                      Address &from);
 
   // Graphene state per in-flight block
   struct GrapheneState {
     BlockHeader header;
     size_t tx_count;
+
     std::set<uint64_t> candidate_ids;
+
+    std::optional<bloom_filter> sender_bloom;
+    std::optional<IBLT> sender_iblt;
+
+    bool waiting_protocol2 = false;
   };
   std::map<std::string, GrapheneState> m_graphene_state;
 

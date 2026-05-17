@@ -11,6 +11,8 @@
  */
 
 #include "graphene.h"
+#include "dag.h"
+#include "thirdparty/bloom_filter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -62,6 +64,55 @@ void BuildIBLTFromIds(IBLT &iblt, const std::vector<uint64_t> &ids) {
     iblt.insert(id, U64ToVec(id));
 }
 
+double ComputeDelta(int z, int x, int m, double fpr) {
+  double temp = (m - x) * fpr;
+  temp = (z - x) / temp;
+  return temp - 1.0;
+}
+
+double RHS(double delta, int m, int x, double fpr) {
+  double num = std::exp(delta);
+  double denom = std::pow(1.0 + delta, 1.0 + delta);
+  double base = num / denom;
+  double exponent = (m - x) * fpr;
+  return std::pow(base, exponent);
+}
+
+int SearchX(int z, int mempool_size, double fpr, double bound, int blk_size) {
+  double total = 0.0;
+  int x_star = 0;
+  int val = std::min(z, blk_size);
+
+  for (int x = 0; x <= val; ++x) {
+    double delta = ComputeDelta(z, x, mempool_size, fpr);
+    double result = RHS(delta, mempool_size, x, fpr);
+
+    if (total + result > bound) {
+      if (x == 0) {
+        x_star = x;
+      } else {
+        x_star = x - 1;
+      }
+      break;
+    } else {
+      total += result;
+    }
+  }
+
+  return x_star;
+}
+double CBbound(double a, double fpr, double bound) {
+  double s = (-1.0 * std::log(bound)) / a;
+  double temp = std::sqrt(s * (s + 8.0));
+  double delta_1 = 0.5 * (s + temp);
+  double delta_2 = 0.5 * (s - temp);
+
+  __ASSERT__(delta_1 >= 0.0, "");
+  __ASSERT__(delta_2 <= 0.0, "");
+
+  return (1.0 + delta_1) * a;
+}
+
 double OptimalSymDiff(uint64_t nBlockTxs, uint64_t nReceiverPoolTx) {
   /* Optimal symmetric difference between block txs and receiver mempool txs
    * passing though filter to use for IBLT.
@@ -85,7 +136,6 @@ double OptimalSymDiff(uint64_t nBlockTxs, uint64_t nReceiverPoolTx) {
   // Techinically there should be no symdiff here, but we need to have at
   // least one entry in the IBLT, otherwise the Bloom filter must have fpr = 0
   if (nReceiverPoolTx == nBlockAndReceiverPoolTx) {
-    std::cout << "helo" << std::endl;
     return 1;
   }
 
@@ -198,7 +248,7 @@ GrapheneProtocol::DecodeStatus GrapheneProtocol::ReconstructBlock(
   std::set<std::pair<uint64_t, std::vector<uint8_t>>> negative;
 
   if (!diff.listEntries(positive, negative)) {
-    return DecodeStatus::FAIL_FATAL;
+    return DecodeStatus::FAIL_RECOVERABLE;
   }
 
   out_txs.clear();
@@ -225,7 +275,113 @@ GrapheneProtocol::DecodeStatus GrapheneProtocol::ReconstructBlock(
   }
 
   if (out_txs.size() != tx_count) {
+    return DecodeStatus::FAIL_RECOVERABLE;
+  }
+
+  return DecodeStatus::SUCCESS;
+}
+
+size_t GrapheneProtocol::BuildRecoveryBloom(const std::vector<uint64_t> Z,
+                                            const size_t m, const size_t n,
+                                            double sender_fpr,
+                                            bloom_filter &out_bf, int &out_b,
+                                            int &out_y_star) {
+  size_t z = Z.size();
+  double bound = 1.0 / 240.0;
+
+  int x_star = SearchX(z, m, sender_fpr, bound, n);
+
+  double temp = (m - x_star) * sender_fpr;
+
+  out_y_star = std::ceil(CBbound(temp, sender_fpr, bound));
+
+  // Optimal symmetric differences between receiver and sender IBLTs
+  // This is the parameter "a" from the graphene paper
+  double optSymDiff = 1;
+  try {
+    if (n < z + 1)
+      optSymDiff = OptimalSymDiff(n, z);
+  } catch (const std::runtime_error &e) {
+    // EVENT
+  }
+
+  // Sender's estimate of number of items in both block and receiver mempool
+  // This is the parameter "mu" from the graphene paper
+  uint64_t nItemIntersect = std::min(n, (uint64_t)z);
+
+  // Set false positive rate for Bloom filter based on optSymDiff
+  double fpr;
+  uint64_t nReceiverExcessItems = z - nItemIntersect;
+  if (optSymDiff >= nReceiverExcessItems)
+    fpr = FILTER_FPR_MAX;
+  else
+    fpr = optSymDiff / float(nReceiverExcessItems);
+
+  bloom_parameters p;
+  p.projected_element_count = std::max((int)z, (int)10);
+  p.false_positive_probability = fpr;
+  p.compute_optimal_parameters();
+
+  out_bf = bloom_filter(p);
+
+  out_b = std::max((int)IBLT_CELL_MINIMUM, (int)ceil(optSymDiff));
+  for (auto txid : Z) {
+    out_bf.insert(txid);
+  }
+
+  return z;
+}
+
+IBLT GrapheneProtocol::SecondIBLT(const Block &blk,
+                                  const bloom_filter &receiver_bloom,
+                                  int y_star, int b,
+                                  std::vector<uint64_t> &missing) {
+
+  auto params_iblt = CIbltParams::Lookup(b + y_star);
+  IBLT J(b + y_star, GrapheneProtocol::IBLT_VALUE_SIZE, params_iblt.overhead,
+         params_iblt.numhashes);
+
+  for (const auto &tx : blk.transactions) {
+
+    J.insert(tx.tx_id, U64ToVec(tx.tx_id));
+
+    if (!receiver_bloom.contains(tx.tx_id)) {
+      missing.push_back(tx.tx_id);
+    }
+  }
+  return J;
+}
+
+GrapheneProtocol::DecodeStatus
+GrapheneProtocol::ReconstructRecoveryBlock(const nlohmann::json &data,
+                                           std::set<uint64_t> &Z) {
+
+  IBLT J = GrapheneProtocol::DeserializeIBLT(data["iblt"]);
+
+  for (uint64_t txid : data["missing"]) {
+    Z.insert(txid);
+  }
+  IBLT Jl(J.hashTableSize(), GrapheneProtocol::IBLT_VALUE_SIZE, 1, J.numHashes);
+
+  for (uint64_t txid : Z) {
+    Jl.insert(txid, U64ToVec(txid));
+  }
+
+  IBLT diff = J - Jl;
+
+  std::set<std::pair<uint64_t, std::vector<uint8_t>>> positive;
+  std::set<std::pair<uint64_t, std::vector<uint8_t>>> negative;
+
+  if (!diff.listEntries(positive, negative)) {
     return DecodeStatus::FAIL_FATAL;
+  }
+
+  for (const auto &[txid, _] : negative) {
+    Z.erase(txid);
+  }
+
+  for (const auto &[txid, _] : positive) {
+    Z.insert(txid);
   }
 
   return DecodeStatus::SUCCESS;

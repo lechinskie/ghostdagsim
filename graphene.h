@@ -84,7 +84,7 @@ class GrapheneProtocol {
 public:
   static constexpr size_t IBLT_VALUE_SIZE = sizeof(uint64_t);
 
-  enum class DecodeStatus { SUCCESS, FAIL_FATAL };
+  enum class DecodeStatus { SUCCESS, FAIL_RECOVERABLE, FAIL_FATAL };
 
   static size_t BuildSenderComponents(
       const std::set<Transaction> &block_txs,
@@ -95,6 +95,17 @@ public:
       const bloom_filter &bf, const IBLT &sender_iblt, size_t tx_count,
       const std::vector<std::pair<uint32_t, uint64_t>> &mempool_entries,
       std::set<Transaction> &out_txs);
+
+  static size_t BuildRecoveryBloom(const std::vector<uint64_t> Z,
+                                   const size_t m, const size_t n,
+                                   double sender_fpr, bloom_filter &out_bf,
+                                   int &out_b, int &out_y_star);
+
+  static IBLT SecondIBLT(const Block &blk, const bloom_filter &receiver_bloom,
+                         int y_star, int b, std::vector<uint64_t> &missing);
+
+  static DecodeStatus ReconstructRecoveryBlock(const nlohmann::json &data,
+                                               std::set<uint64_t> &Z);
 
   static nlohmann::json SerializeBloomFilter(const bloom_filter &bf);
   static bloom_filter DeserializeBloomFilter(const nlohmann::json &j);
