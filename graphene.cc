@@ -32,13 +32,6 @@ const uint8_t IBLT_CELL_MINIMUM = 2;
 
 namespace {
 
-std::vector<uint8_t> U64ToVec(uint64_t v) {
-  std::vector<uint8_t> out(sizeof(uint64_t));
-  for (size_t i = 0; i < sizeof(uint64_t); i++)
-    out[i] = static_cast<uint8_t>((v >> (i * 8)) & 0xff);
-  return out;
-}
-
 std::vector<uint64_t> TxIdsFromBlock(const std::set<Transaction> &txs) {
   std::vector<uint64_t> ids;
   ids.reserve(txs.size());
@@ -61,16 +54,21 @@ BuildCandidateSet(const bloom_filter &bf,
 
 void BuildIBLTFromIds(IBLT &iblt, const std::vector<uint64_t> &ids) {
   for (uint64_t id : ids)
-    iblt.insert(id, U64ToVec(id));
+    iblt.insert(id, GrapheneProtocol::U64ToVec(id));
 }
 
-double ComputeDelta(int z, int x, int m, double fpr) {
+} // anonymous namespace
+//
+
+// --- Graphene parameter helpers ---
+
+static double ComputeDelta(int z, int x, int m, double fpr) {
   double temp = (m - x) * fpr;
   temp = (z - x) / temp;
   return temp - 1.0;
 }
 
-double RHS(double delta, int m, int x, double fpr) {
+static double RHS(double delta, int m, int x, double fpr) {
   double num = std::exp(delta);
   double denom = std::pow(1.0 + delta, 1.0 + delta);
   double base = num / denom;
@@ -78,7 +76,8 @@ double RHS(double delta, int m, int x, double fpr) {
   return std::pow(base, exponent);
 }
 
-int SearchX(int z, int mempool_size, double fpr, double bound, int blk_size) {
+static int SearchX(int z, int mempool_size, double fpr, double bound,
+                   int blk_size) {
   double total = 0.0;
   int x_star = 0;
   int val = std::min(z, blk_size);
@@ -101,14 +100,13 @@ int SearchX(int z, int mempool_size, double fpr, double bound, int blk_size) {
 
   return x_star;
 }
-double CBbound(double a, double fpr, double bound) {
+
+static double CBbound(double a, double fpr, double bound) {
+  if (a <= 0.0)
+    return 1.0;
   double s = (-1.0 * std::log(bound)) / a;
   double temp = std::sqrt(s * (s + 8.0));
   double delta_1 = 0.5 * (s + temp);
-  double delta_2 = 0.5 * (s - temp);
-
-  __ASSERT__(delta_1 >= 0.0, "");
-  __ASSERT__(delta_2 <= 0.0, "");
 
   return (1.0 + delta_1) * a;
 }
@@ -124,8 +122,8 @@ double OptimalSymDiff(uint64_t nBlockTxs, uint64_t nReceiverPoolTx) {
    * L(a) as defined in the code below. (Note that meta parameters for the
    * Bloom Filter and IBLT are ignored).
    */
-  assert(nReceiverPoolTx >=
-         nBlockTxs - 1); // Assume reciever is missing only one tx
+  __ASSERT__(nReceiverPoolTx >= nBlockTxs - 1,
+             "Assume reciever is missing only one tx");
 
   if (nReceiverPoolTx > LARGE_MEM_POOL_SIZE)
     throw std::runtime_error("Receiver mempool is too large for optimization");
@@ -173,18 +171,24 @@ double OptimalSymDiff(uint64_t nBlockTxs, uint64_t nReceiverPoolTx) {
   return optSymDiff;
 }
 
-} // anonymous namespace
 //
+
+std::vector<uint8_t> GrapheneProtocol::U64ToVec(uint64_t v) {
+  std::vector<uint8_t> out(sizeof(uint64_t));
+  for (size_t i = 0; i < sizeof(uint64_t); i++)
+    out[i] = static_cast<uint8_t>((v >> (i * 8)) & 0xff);
+  return out;
+}
 
 //  Sender — Protocol 1
 
-size_t GrapheneProtocol::BuildSenderComponents(
-    const std::set<Transaction> &block_txs,
-    const std::vector<std::pair<uint32_t, uint64_t>> &mempool_txs,
-    bloom_filter &out_bf, IBLT &out_iblt) {
+size_t
+GrapheneProtocol::BuildSenderComponents(const std::set<Transaction> &block_txs,
+                                        size_t receiver_mempool_count,
+                                        bloom_filter &out_bf, IBLT &out_iblt) {
 
   size_t n = block_txs.size();
-  size_t m = mempool_txs.size();
+  size_t m = receiver_mempool_count;
 
   // Optimal symmetric differences between receiver and sender IBLTs
   // This is the parameter "a" from the graphene paper
@@ -218,7 +222,10 @@ size_t GrapheneProtocol::BuildSenderComponents(
   for (uint64_t id : ids)
     out_bf.insert(id);
 
-  uint64_t nIbltCells = std::max((int)IBLT_CELL_MINIMUM, (int)ceil(optSymDiff));
+  double bound = 1.0 / 240.0;
+  double a_star = CBbound(optSymDiff, fpr, bound);
+  uint64_t nIbltCells = std::max((int)IBLT_CELL_MINIMUM, (int)ceil(a_star));
+
   auto params_iblt = CIbltParams::Lookup(nIbltCells);
   out_iblt = IBLT(nIbltCells, IBLT_VALUE_SIZE, params_iblt.overhead,
                   params_iblt.numhashes);
@@ -281,7 +288,7 @@ GrapheneProtocol::DecodeStatus GrapheneProtocol::ReconstructBlock(
   return DecodeStatus::SUCCESS;
 }
 
-size_t GrapheneProtocol::BuildRecoveryBloom(const std::vector<uint64_t> Z,
+size_t GrapheneProtocol::BuildRecoveryBloom(const std::vector<uint64_t> &Z,
                                             const size_t m, const size_t n,
                                             double sender_fpr,
                                             bloom_filter &out_bf, int &out_b,
@@ -295,36 +302,52 @@ size_t GrapheneProtocol::BuildRecoveryBloom(const std::vector<uint64_t> Z,
 
   out_y_star = std::ceil(CBbound(temp, sender_fpr, bound));
 
-  // Optimal symmetric differences between receiver and sender IBLTs
-  // This is the parameter "a" from the graphene paper
-  double optSymDiff = 1;
-  try {
-    if (n < z + 1)
-      optSymDiff = OptimalSymDiff(n, z);
-  } catch (const std::runtime_error &e) {
-    // EVENT
+  // Compute optimal b (symmetric diff) and fpr for Protocol 2 recovery IBLT
+  // fR = b / (n - x_star) where x_star is the lower bound on true positives
+  int64_t nMissingFromBlock = static_cast<int64_t>(n) - x_star;
+  if (nMissingFromBlock <= 0)
+    nMissingFromBlock = 1;
+
+  int best_b = 1;
+  double best_fpr = 0;
+  double best_total = std::numeric_limits<double>::max();
+
+  for (int b = 1; b <= static_cast<int>(std::max(z, (size_t)1)); ++b) {
+    double fpr_r = static_cast<double>(b) / nMissingFromBlock;
+    if (fpr_r > FILTER_FPR_MAX)
+      fpr_r = FILTER_FPR_MAX;
+    if (fpr_r <= 0)
+      fpr_r = 1e-6;
+
+    double bf_size = std::ceil(FILTER_CELL_SIZE *
+                               (-1.0 / LN2SQUARED * z * std::log(fpr_r) / 8));
+
+    uint64_t total_items = static_cast<uint64_t>(b) + out_y_star;
+    uint8_t n_iblt_hash = OptimalNHash(total_items);
+    float iblt_overhead = OptimalOverhead(total_items);
+    uint64_t padded_cells = static_cast<int>(iblt_overhead * total_items);
+    uint64_t cells =
+        n_iblt_hash * static_cast<int>(std::ceil(
+                          padded_cells / static_cast<float>(n_iblt_hash)));
+    double iblt_size = IBLT_CELL_SIZE * cells;
+
+    double total = bf_size + iblt_size;
+    if (total < best_total) {
+      best_total = total;
+      best_b = b;
+      best_fpr = fpr_r;
+    }
   }
 
-  // Sender's estimate of number of items in both block and receiver mempool
-  // This is the parameter "mu" from the graphene paper
-  uint64_t nItemIntersect = std::min(n, (uint64_t)z);
-
-  // Set false positive rate for Bloom filter based on optSymDiff
-  double fpr;
-  uint64_t nReceiverExcessItems = z - nItemIntersect;
-  if (optSymDiff >= nReceiverExcessItems)
-    fpr = FILTER_FPR_MAX;
-  else
-    fpr = optSymDiff / float(nReceiverExcessItems);
-
   bloom_parameters p;
-  p.projected_element_count = std::max((int)z, (int)10);
-  p.false_positive_probability = fpr;
+  p.projected_element_count = std::max(static_cast<int>(z), 10);
+  p.false_positive_probability = best_fpr;
   p.compute_optimal_parameters();
 
   out_bf = bloom_filter(p);
 
-  out_b = std::max((int)IBLT_CELL_MINIMUM, (int)ceil(optSymDiff));
+  out_b = std::max(static_cast<int>(IBLT_CELL_MINIMUM),
+                   static_cast<int>(ceil(best_b)));
   for (auto txid : Z) {
     out_bf.insert(txid);
   }
@@ -364,7 +387,7 @@ GrapheneProtocol::ReconstructRecoveryBlock(const nlohmann::json &data,
   IBLT Jl(J.hashTableSize(), GrapheneProtocol::IBLT_VALUE_SIZE, 1, J.numHashes);
 
   for (uint64_t txid : Z) {
-    Jl.insert(txid, U64ToVec(txid));
+    Jl.insert(txid, GrapheneProtocol::U64ToVec(txid));
   }
 
   IBLT diff = J - Jl;
@@ -385,6 +408,47 @@ GrapheneProtocol::ReconstructRecoveryBlock(const nlohmann::json &data,
   }
 
   return DecodeStatus::SUCCESS;
+}
+
+GrapheneProtocol::DecodeStatus
+GrapheneProtocol::TryPingPong(IBLT &first, IBLT &second,
+                              std::set<uint64_t> &in_block,
+                              std::set<uint64_t> &not_in_block) {
+
+  std::set<std::pair<uint64_t, std::vector<uint8_t>>> positive;
+  std::set<std::pair<uint64_t, std::vector<uint8_t>>> negative;
+
+  bool second_ok = second.listEntries(positive, negative);
+  bool flag = false;
+
+  if (positive.empty() && negative.empty()) {
+    bool first_ok = first.listEntries(positive, negative);
+    flag = true;
+
+    if (positive.empty() && negative.empty()) {
+      return (first_ok && second_ok) ? DecodeStatus::SUCCESS
+                                     : DecodeStatus::FAIL_RECOVERABLE;
+    }
+  }
+
+  // Our IBLT subtraction convention (sender - receiver):
+  //   +1 entries: in sender not receiver = block txs
+  //   -1 entries: in receiver not sender = false positives
+  for (const auto &[key, val] : positive) {
+    in_block.insert(key);
+    second.erase(key, val);
+    first.erase(key, val);
+  }
+  for (const auto &[key, val] : negative) {
+    not_in_block.insert(key);
+    second.insert(key, val);
+    first.insert(key, val);
+  }
+
+  if (flag)
+    return TryPingPong(first, second, in_block, not_in_block);
+  else
+    return TryPingPong(second, first, in_block, not_in_block);
 }
 
 nlohmann::json GrapheneProtocol::SerializeBloomFilter(const bloom_filter &bf) {
@@ -480,4 +544,163 @@ IBLT GrapheneProtocol::DeserializeIBLT(const nlohmann::json &j) {
   }
 
   return IBLT(value_size, num_hashes, entries);
+}
+
+// ============================================================================
+//  High-level protocol entry points
+// ============================================================================
+
+IncomingBlockResult GrapheneProtocol::ProcessIncomingBlock(
+    const nlohmann::json &data,
+    const std::vector<std::pair<uint32_t, uint64_t>> &mempool,
+    size_t mempool_size) {
+
+  IncomingBlockResult result;
+
+  bloom_filter bf = DeserializeBloomFilter(data["bloom_filter"]);
+  IBLT iblt = DeserializeIBLT(data["iblt"]);
+  size_t tx_count = data["tx_count"].get<size_t>();
+
+  // Try Protocol 1
+  std::set<Transaction> recovered_txs;
+  auto status = ReconstructBlock(bf, iblt, tx_count, mempool, recovered_txs);
+
+  if (status == DecodeStatus::SUCCESS) {
+    Block block;
+    block.header.block_id = data["block_id"].get<uint64_t>();
+    block.header.miner_id = data["miner_id"].get<uint64_t>();
+    block.header.time_created = data["time_created"].get<double>();
+    if (data.contains("parent_hashes")) {
+      for (auto &ph : data["parent_hashes"])
+        block.header.parent_hashes.push_back(ph.get<uint64_t>());
+    }
+    block.transactions = recovered_txs;
+    block.size_in_bytes = block.GetTotalSize();
+
+    uint64_t recovered_checksum = 0;
+    for (const auto &tx : recovered_txs) {
+      recovered_checksum ^= tx.tx_id;
+    }
+
+    __ASSERT__(
+        recovered_checksum == data["tx_checksum"].get<uint64_t>(),
+        "tx_checksum received from peer is different from reconstructed on "
+        "graphene");
+
+    result.success = true;
+    result.block = std::move(block);
+    return result;
+  }
+
+  // Protocol 1 failed — build recovery state
+  auto &rstate = result.recovery_state;
+  rstate.tx_count = tx_count;
+  rstate.header.block_id = data["block_id"].get<uint64_t>();
+  rstate.header.miner_id = data["miner_id"].get<uint64_t>();
+  rstate.header.time_created = data["time_created"].get<double>();
+  if (data.contains("parent_hashes")) {
+    for (auto &ph : data["parent_hashes"])
+      rstate.header.parent_hashes.push_back(ph.get<uint64_t>());
+  }
+
+  for (const auto &entry : mempool) {
+    uint64_t txid = entry.second;
+    if (bf.contains(txid)) {
+      rstate.candidate_ids.insert(txid);
+    }
+  }
+
+  // Store Protocol 1 diff IBLT for potential ping-pong recovery
+  {
+    IBLT recv_iblt(iblt.hashTableSize(), IBLT_VALUE_SIZE, 1.0f, iblt.numHashes);
+    for (uint64_t txid : rstate.candidate_ids) {
+      recv_iblt.insert(txid, U64ToVec(txid));
+    }
+    rstate.diff1 = iblt - recv_iblt;
+  }
+
+  // Build recovery bloom and request
+  std::vector<uint64_t> Z(rstate.candidate_ids.begin(),
+                          rstate.candidate_ids.end());
+  bloom_filter rbf;
+  int b, y_star;
+  BuildRecoveryBloom(Z, mempool_size, tx_count, data["fpr"], rbf, b, y_star);
+
+  nlohmann::json req;
+  req["block_hash"] = data["block_hash"];
+  req["b"] = b;
+  req["y_star"] = y_star;
+  req["receiver_bloom"] = SerializeBloomFilter(rbf);
+  result.recovery_request = std::move(req);
+
+  rstate.waiting_protocol2 = true;
+  result.success = false;
+  return result;
+}
+
+RecoveryResponseResult
+GrapheneProtocol::ProcessRecoveryResponse(const nlohmann::json &data,
+                                          const GrapheneState &state) {
+
+  RecoveryResponseResult result;
+
+  size_t tx_count = state.tx_count;
+  std::set<uint64_t> Z = state.candidate_ids;
+
+  DecodeStatus status = ReconstructRecoveryBlock(data, Z);
+
+  if (status == DecodeStatus::SUCCESS) {
+    // Verify checksum, then return txid set (caller builds Block with fee info)
+    uint64_t recovered_checksum = 0;
+    for (auto txid : Z) {
+      recovered_checksum ^= txid;
+    }
+
+    __ASSERT__(
+        recovered_checksum == data["tx_checksum"].get<uint64_t>(),
+        "tx_checksum received from peer is different from reconstructed on "
+        "graphene protocol 2");
+
+    result.success = true;
+    result.block_txids = std::move(Z);
+    return result;
+  }
+
+  // Protocol 2 IBLT decoding failed — try ping-pong recovery
+  if (state.diff1.has_value()) {
+    // Build diff2 IBLT = J - Jl (same as inside ReconstructRecoveryBlock)
+    IBLT J = DeserializeIBLT(data["iblt"]);
+    IBLT Jl(J.hashTableSize(), IBLT_VALUE_SIZE, 1.0f, J.numHashes);
+    for (uint64_t txid : Z) {
+      Jl.insert(txid, U64ToVec(txid));
+    }
+    IBLT diff2 = J - Jl;
+
+    IBLT diff1_copy = state.diff1.value();
+    std::set<uint64_t> in_block, not_in_block;
+    auto pp_status = TryPingPong(diff1_copy, diff2, in_block, not_in_block);
+
+    if (pp_status == DecodeStatus::SUCCESS) {
+      std::set<uint64_t> block_txids = Z;
+      for (auto txid : in_block)
+        block_txids.insert(txid);
+      for (auto txid : not_in_block)
+        block_txids.erase(txid);
+
+      if (block_txids.size() == tx_count) {
+        uint64_t recovered_checksum = 0;
+        for (auto txid : block_txids)
+          recovered_checksum ^= txid;
+
+        if (recovered_checksum == data["tx_checksum"].get<uint64_t>()) {
+          result.success = true;
+          result.block_txids = std::move(block_txids);
+          return result;
+        }
+      }
+    }
+  }
+
+  result.success = false;
+  return result;
 }

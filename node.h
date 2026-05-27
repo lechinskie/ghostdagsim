@@ -78,7 +78,8 @@ protected:
   // --- 1. Real-Time Propagation Handlers ---
   void HandleInvRelayBlock(const std::string &block_hash, Address &from);
   void HandleReqRelayBlock(const std::string &block_hash, bool graphene,
-                           Address &from);
+                           Address &from,
+                           uint64_t receiver_mempool_count = 0);
   void HandleBlock(const Block &new_block, Address &from);
 
   // --- 1b. Graphene propagation handlers ---
@@ -88,18 +89,6 @@ protected:
   void HandleGrapheneRecoveryResponse(const nlohmann::json &data,
                                       Address &from);
 
-  // Graphene state per in-flight block
-  struct GrapheneState {
-    BlockHeader header;
-    size_t tx_count;
-
-    std::set<uint64_t> candidate_ids;
-
-    std::optional<bloom_filter> sender_bloom;
-    std::optional<IBLT> sender_iblt;
-
-    bool waiting_protocol2 = false;
-  };
   std::map<std::string, GrapheneState> m_graphene_state;
 
   // --- 2. Mempool management ---

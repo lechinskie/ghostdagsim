@@ -76,9 +76,36 @@
 #include "thirdparty/json.h"
 
 #include <cstdint>
+#include <optional>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
+
+struct GrapheneState {
+  BlockHeader header;
+  size_t tx_count = 0;
+
+  std::set<uint64_t> candidate_ids;
+
+  std::optional<bloom_filter> sender_bloom;
+  std::optional<IBLT> sender_iblt;
+  std::optional<IBLT> diff1;
+
+  bool waiting_protocol2 = false;
+};
+
+struct IncomingBlockResult {
+  bool success = false;
+  Block block;
+  GrapheneState recovery_state;
+  nlohmann::json recovery_request;
+};
+
+struct RecoveryResponseResult {
+  bool success = false;
+  std::set<uint64_t> block_txids;
+};
 
 class GrapheneProtocol {
 public:
@@ -86,17 +113,16 @@ public:
 
   enum class DecodeStatus { SUCCESS, FAIL_RECOVERABLE, FAIL_FATAL };
 
-  static size_t BuildSenderComponents(
-      const std::set<Transaction> &block_txs,
-      const std::vector<std::pair<uint32_t, uint64_t>> &mempool_txs,
-      bloom_filter &out_bf, IBLT &out_iblt);
+  static size_t BuildSenderComponents(const std::set<Transaction> &block_txs,
+                                      size_t receiver_mempool_count,
+                                      bloom_filter &out_bf, IBLT &out_iblt);
 
   static DecodeStatus ReconstructBlock(
       const bloom_filter &bf, const IBLT &sender_iblt, size_t tx_count,
       const std::vector<std::pair<uint32_t, uint64_t>> &mempool_entries,
       std::set<Transaction> &out_txs);
 
-  static size_t BuildRecoveryBloom(const std::vector<uint64_t> Z,
+  static size_t BuildRecoveryBloom(const std::vector<uint64_t> &Z,
                                    const size_t m, const size_t n,
                                    double sender_fpr, bloom_filter &out_bf,
                                    int &out_b, int &out_y_star);
@@ -106,6 +132,21 @@ public:
 
   static DecodeStatus ReconstructRecoveryBlock(const nlohmann::json &data,
                                                std::set<uint64_t> &Z);
+
+  static DecodeStatus TryPingPong(IBLT &first, IBLT &second,
+                                  std::set<uint64_t> &in_block,
+                                  std::set<uint64_t> &not_in_block);
+
+  static std::vector<uint8_t> U64ToVec(uint64_t v);
+
+  static IncomingBlockResult
+  ProcessIncomingBlock(const nlohmann::json &data,
+                       const std::vector<std::pair<uint32_t, uint64_t>> &mempool,
+                       size_t mempool_size);
+
+  static RecoveryResponseResult
+  ProcessRecoveryResponse(const nlohmann::json &data,
+                          const GrapheneState &state);
 
   static nlohmann::json SerializeBloomFilter(const bloom_filter &bf);
   static bloom_filter DeserializeBloomFilter(const nlohmann::json &j);
