@@ -493,7 +493,7 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
         receiver_mempool_count > 0 ? receiver_mempool_count : m_mempool.size();
 
     bloom_filter bf{bloom_parameters()};
-    IBLT iblt(1, GrapheneProtocol::IBLT_VALUE_SIZE);
+    IBLT iblt(1, GrapheneProtocol::IBLT_VALUE_SIZE, 1, 1);
 
     GrapheneProtocol::BuildSenderComponents(block.transactions, mc, bf, iblt);
 

@@ -90,8 +90,6 @@ public:
     std::vector<uint8_t> valueSum;
   };
 
-  IBLT(size_t expectedNumEntries, size_t valueSize);
-
   IBLT(size_t expectedNumEntries, size_t valueSize, float hedge,
        size_t numHashes);
 
@@ -101,8 +99,6 @@ public:
                 const std::vector<Entry> &entries);
 
   ~IBLT() = default;
-
-  static void set_parameter_file(const char *filename);
 
   void insert(uint64_t k, const std::vector<uint8_t> &v);
 
@@ -158,10 +154,6 @@ public:
   };
 
   void _insert(int plusOrMinus, uint64_t k, const std::vector<uint8_t> &v);
-
-  std::pair<int, double> OptimalParameters(size_t entries);
-
-  static std::string parameter_file;
 
   std::vector<HashTableEntry> hashTable;
 };
@@ -250,19 +242,6 @@ template <typename T> static std::vector<uint8_t> ToVec(T number) {
 
 } // namespace iblt_detail
 
-// ============================================================================
-
-std::string IBLT::parameter_file =
-    "./param.export.0.995833333333333.2018-07-12.csv";
-
-// ============================================================================
-
-void IBLT::set_parameter_file(const char *filename) {
-  parameter_file = std::string(filename);
-}
-
-// ============================================================================
-
 bool IBLT::HashTableEntry::isPure() const {
   if (count == 1 || count == -1) {
     uint32_t check = iblt_detail::MurmurHash3(iblt_detail::N_HASHCHECK,
@@ -287,24 +266,6 @@ void IBLT::HashTableEntry::addValue(const std::vector<uint8_t> &v) {
 
   for (size_t i = 0; i < v.size(); i++)
     valueSum[i] ^= v[i];
-}
-
-// ============================================================================
-
-IBLT::IBLT(size_t expectedNumEntries, size_t valueSize) : valueSize(valueSize) {
-  auto params = OptimalParameters(expectedNumEntries);
-
-  numHashes = static_cast<size_t>(params.first);
-
-  auto hedge = static_cast<float>(params.second);
-
-  auto nEntries =
-      static_cast<size_t>(static_cast<double>(expectedNumEntries) * hedge);
-
-  while (numHashes * (nEntries / numHashes) != nEntries)
-    ++nEntries;
-
-  hashTable.resize(nEntries);
 }
 
 IBLT::IBLT(size_t expectedNumEntries, size_t valueSize, float hedge,
@@ -336,53 +297,6 @@ IBLT::IBLT(size_t valueSize, size_t numHashes,
     hashTable[i].valueSum = entries[i].valueSum;
   }
 }
-
-// ============================================================================
-
-std::pair<int, double> IBLT::OptimalParameters(size_t entries) {
-  static std::unordered_map<int, std::pair<int, double>> parameters;
-
-  if (parameters.empty()) {
-    std::ifstream myfile(parameter_file);
-
-    if (!myfile.is_open()) {
-      std::cerr << "IBLT: Unable to open parameter file: " << parameter_file
-                << "\n";
-
-      std::exit(-1);
-    }
-
-    std::string line;
-
-    std::getline(myfile, line);
-
-    while (std::getline(myfile, line)) {
-      std::istringstream iss(line);
-
-      std::string cols[5];
-
-      for (int j = 0; j < 5 && std::getline(iss, cols[j], ','); ++j) {
-      }
-
-      int items = std::stoi(cols[0]);
-      double hedge = std::stof(cols[1]);
-      int numHash = std::stoi(cols[2]);
-
-      parameters.emplace(items, std::make_pair(numHash, hedge));
-    }
-  }
-
-  while (parameters.count(static_cast<int>(entries)) == 0 && entries > 0) {
-    --entries;
-  }
-
-  if (entries == 0)
-    return {3, 1.5};
-
-  return parameters.at(static_cast<int>(entries));
-}
-
-// ============================================================================
 
 void IBLT::_insert(int plusOrMinus, uint64_t k, const std::vector<uint8_t> &v) {
   assert(v.size() == valueSize);
