@@ -23,10 +23,8 @@
 #include "helpers/node-topology-helper.h"
 #include "metrics.h"
 
-#include "ns3/applications-module.h"
 #include "ns3/core-module.h"
 #include "ns3/internet-module.h"
-#include "ns3/mobility-module.h"
 #include "ns3/mpi-interface.h"
 #include "ns3/network-module.h"
 #include "ns3/point-to-point-module.h"

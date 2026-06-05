@@ -22,7 +22,6 @@
 
 #include "node-topology-helper.h"
 #include "../dag.h"
-#include "ns3/constant-position-mobility-model.h"
 #include "ns3/double.h"
 #include "ns3/internet-stack-helper.h"
 #include "ns3/ipv6-address-generator.h"
