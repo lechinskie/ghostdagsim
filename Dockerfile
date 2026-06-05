@@ -17,7 +17,7 @@ RUN wget -q https://www.nsnam.org/release/ns-allinone-${NS3_VERSION}.tar.bz2 && 
 
 WORKDIR /opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}
 
-RUN ./ns3 configure --build-profile=optimized --enable-mpi -- -DGHOSTDAGSIM_METRICS=ON && \
+RUN ./ns3 configure --build-profile=optimized --enable-modules=core,network,internet,point-to-point --enable-mpi -- -DGHOSTDAGSIM_METRICS=ON && \
     ./ns3 build
 
 COPY . /opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}/scratch/ghostdagsim/
