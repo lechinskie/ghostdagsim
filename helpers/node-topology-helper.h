@@ -3,7 +3,7 @@
  * @brief Netork topology helper for P2P blockchain simulation
  * @author Josh Pelkey <jpelkey@gatech.edu> (original Bitcoin-Simulator)
  * @see https://github.com/arthurgervais/Bitcoin-Simulator
- * @author Eduardo Ramos <eduardo_ramos@edu.univali.br> (GHOSTDAG adaptations)
+ * @author Eduardo Lechinski Ramos <lechinski@univali.br> (GHOSTDAG adaptations)
  * @date 2026
  *
  * This program is free software; you can redistribute it and/or modify

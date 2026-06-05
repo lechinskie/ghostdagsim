@@ -39,7 +39,7 @@
  *
  * @author Tomas Hladky <xhladk15@stud.fit.vutbr.cz>
  * @author Martin Peresini <iperesini@fit.vut.cz>
- * @author Eduardo Ramos <eduardo_ramos@edu.univali.br> (revised for
+ * @author Eduardo Lechinski Ramos <lechinski@univali.br> (revised for
  * ns-3/GHOSTDAG)
  * @date 2026
  */

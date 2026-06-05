@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2008 University of Washington
- * Copyright (c) 2026 Eramoss <eduardo_ramos@edu.univali.br> revised
+ * Copyright (c) 2026 Eduardo Lechinski Ramos <lechinski@univali.br> revised
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as

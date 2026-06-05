@@ -2,7 +2,7 @@
  * @file graphene.cc
  * @brief Graphene block propagation protocol implementation
  *
- * @author Eduardo Ramos <eduardo_ramos@edu.univali.br>
+ * @author Eduardo Lechinski Ramos <lechinski@univali.br>
  * @date 2026
  *
  * This program is free software; you can redistribute it and/or modify

@@ -3,11 +3,11 @@ title: GhostDAG Simulator
 message: "If you use this software, please cite it as below."
 type: software
 authors:
-  - family-names: Ramos
+  - family-names: Lechinski
     given-names: Eduardo
-    email: eduardo_ramos@edu.univali.br
+    email: lechinski@univali.br
     affiliation: UNIVALI
-repository-code: https://github.com/eramoss/ghostdagsim
+repository-code: https://github.com/lechinskie/ghostdagsim
 license: GPL-2.0
 version: 0.1.0
 date-released: 2026-03-23

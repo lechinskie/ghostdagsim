@@ -3,7 +3,7 @@
  * @brief iblt sinlge-file library derived from graphene +
  https://github.com/umass-forensics/IBLT-optimization and
  https://github.com/gavinandresen/IBLT_Cplusplus
- * @author Eduardo Ramos <eduardo_ramos@edu.univali.br>
+ * @author Eduardo Lechinski Ramos <lechinski@univali.br>
  * @date 2026
  *
  * Original author Copyright (c) 2014 Gavin Andresen
