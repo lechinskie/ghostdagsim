@@ -110,29 +110,43 @@ private:
 
 // clang-format off
 
-// --- Block lifecycle --------------------------------------------------------
-
-#define EVENT_BLOCK_MINED(node, block, parent_hashes, parent_count)    \
-  LOG_EVENT("block_mined",                                             \
+#define EVENT_DAG_SNAPSHOT(node, dag_size, blue_count, red_count,      \
+                           red_ratio, dag_width, mempool_size)         \
+  LOG_EVENT("dag_snapshot",                                            \
     LOG_FIELD("node",         (uint64_t)(node))                        \
-    LOG_FIELD("block",        (uint64_t)(block))                       \
-    LOG_FIELD("parents",      (parent_hashes))                         \
-    LOG_FIELD("parent_count", (uint32_t)(parent_count))                \
+    LOG_FIELD("dag_size",     (uint64_t)(dag_size))                    \
+    LOG_FIELD("blue_count",   (uint64_t)(blue_count))                  \
+    LOG_FIELD("red_count",    (uint64_t)(red_count))                   \
+    LOG_FIELD("red_ratio",    (double)(red_ratio))                     \
+    LOG_FIELD("dag_width",    (uint64_t)(dag_width))                   \
+    LOG_FIELD("mempool_size", (uint64_t)(mempool_size))                \
   )
 
-#define EVENT_BLOCK_RECEIVED(node, block, from, size_bytes,            \
-                             total_txs, already_known, parent_count)   \
-  LOG_EVENT("block_received",                                          \
-    LOG_FIELD("node",          (uint64_t)(node))                       \
-    LOG_FIELD("block",         (uint64_t)(block))                      \
-    LOG_FIELD("from",          (std::string)(from))                    \
-    LOG_FIELD("size_bytes",    (uint32_t)(size_bytes))                 \
-    LOG_FIELD("total_txs",     (uint32_t)(total_txs))                  \
-    LOG_FIELD("already_known", (uint32_t)(already_known))              \
-    LOG_FIELD("overlap_ratio", (total_txs) > 0                         \
-                                 ? (double)(already_known)/(total_txs) \
-                                 : 1.0)                                \
-    LOG_FIELD("parent_count",  (uint32_t)(parent_count))               \
+// --- Block lifecycle --------------------------------------------------------
+
+#define EVENT_BLOCK_MINED(node, block, parent_hashes, parent_count, dag_width_at_mine)    \
+  LOG_EVENT("block_mined",                                                                \
+    LOG_FIELD("node",         (uint64_t)(node))                                           \
+    LOG_FIELD("block",        (uint64_t)(block))                                          \
+    LOG_FIELD("parents",      (parent_hashes))                                            \
+    LOG_FIELD("parent_count", (uint32_t)(parent_count))                                   \
+    LOG_FIELD("dag_width_at_mine", (uint64_t)(dag_width_at_mine))                         \
+  )
+
+#define EVENT_BLOCK_RECEIVED(node, block, from, size_bytes,                                 \
+                             total_txs, already_known, parent_count, time_created)          \
+  LOG_EVENT("block_received",                                                               \
+    LOG_FIELD("node",          (uint64_t)(node))                                            \
+    LOG_FIELD("block",         (uint64_t)(block))                                           \
+    LOG_FIELD("from",          (std::string)(from))                                         \
+    LOG_FIELD("size_bytes",    (uint32_t)(size_bytes))                                      \
+    LOG_FIELD("total_txs",     (uint32_t)(total_txs))                                       \
+    LOG_FIELD("already_known", (uint32_t)(already_known))                                   \
+    LOG_FIELD("overlap_ratio", (total_txs) > 0                                              \
+                                 ? (double)(already_known)/(total_txs)                      \
+                                 : 1.0)                                                     \
+    LOG_FIELD("parent_count",  (uint32_t)(parent_count))                                    \
+    LOG_FIELD("prop_latency", ns3::Simulator::Now().GetSeconds() - (double)(time_created))  \
   )
 
 #define EVENT_BLOCK_GRAPHENE_FALLBACK(node, block, from)               \
@@ -148,11 +162,19 @@ private:
     LOG_FIELD("block",         (uint64_t)(block))                      \
     LOG_FIELD("from",          (std::string)(from))                    \
   )
-#define EVENT_BLOCK_GRAPHENE_SUCCESS2(node, block, from)                \
-  LOG_EVENT("block_graphene_success_prot2",                                  \
+#define EVENT_BLOCK_GRAPHENE_SUCCESS2(node, block, from)               \
+  LOG_EVENT("block_graphene_success_prot2",                            \
     LOG_FIELD("node",          (uint64_t)(node))                       \
     LOG_FIELD("block",         (uint64_t)(block))                      \
     LOG_FIELD("from",          (std::string)(from))                    \
+  )
+
+#define EVENT_GRAPHENE_RECOVERY(node, block, from, recovery_bytes) \
+  LOG_EVENT("graphene_recovery",                                   \
+    LOG_FIELD("node",           (uint64_t)(node))                  \
+    LOG_FIELD("block",          (uint64_t)(block))                 \
+    LOG_FIELD("from",           (std::string)(from))               \
+    LOG_FIELD("recovery_bytes", (uint32_t)(recovery_bytes))        \
   )
 
 #define EVENT_BLOCK_ORPHANED(node, block, missing_parents)  \
@@ -206,7 +228,7 @@ private:
     LOG_FIELD("fee",   (uint32_t)(fee))       \
   )
 
-#define EVENT_TX_CONFIRMED(node, tx_id, block, gen_t, is_blue)  \
+#define EVENT_TX_CONFIRMED(node, tx_id, block, gen_t, is_blue)   \
   LOG_EVENT("tx_confirmed",                                      \
     LOG_FIELD("node",    (uint64_t)(node))                       \
     LOG_FIELD("tx_id",   (uint64_t)(tx_id))                      \
@@ -217,3 +239,10 @@ private:
     LOG_FIELD("is_blue", (bool)(is_blue))                        \
   )
 
+#define EVENT_BLOCK_TX_COMPETITION(node, block, sibling_overlap, sibling_count) \
+  LOG_EVENT("block_tx_competition",                                             \
+    LOG_FIELD("node",            (uint64_t)(node))                              \
+    LOG_FIELD("block",           (uint64_t)(block))                             \
+    LOG_FIELD("sibling_overlap", (double)(sibling_overlap))                     \
+    LOG_FIELD("sibling_count",   (uint32_t)(sibling_count))                     \
+  )

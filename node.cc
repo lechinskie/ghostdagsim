@@ -233,6 +233,7 @@ void GhostDagNode::StartApplication() {
 
   m_mempool = Mempool(static_cast<size_t>(m_mempoolSize));
   StartTransactionGeneration();
+  ScheduleSnapshot();
 }
 
 void GhostDagNode::StopApplication() {
@@ -252,6 +253,8 @@ void GhostDagNode::StopApplication() {
   NS_LOG_WARN("\n\nGHOSTDAG NODE " << GetNode()->GetId() << ":");
   NS_LOG_WARN("Total Blocks in DAG = " << m_blockchain.blocks.size());
 
+  if (m_snapshotEvent.IsPending())
+    Simulator::Cancel(m_snapshotEvent);
   StopTransactionGeneration();
 }
 
@@ -1085,6 +1088,28 @@ void GhostDagNode::HandleConnectionFailed(Ptr<Socket> socket) {
   m_peers_sockets.erase(peer_addr);
   m_pending_messages.erase(peer_addr);
   m_socket_to_peer.erase(map_it);
+}
+
+void GhostDagNode::ScheduleSnapshot() {
+  m_snapshotEvent = Simulator::Schedule(Seconds(m_snapshotInterval),
+                                        &GhostDagNode::EmitDagSnapshot, this);
+}
+
+void GhostDagNode::EmitDagSnapshot() {
+  uint64_t total = m_blockchain.blocks.size();
+  uint64_t blue_count = 0;
+
+  for (auto &[id, blk] : m_blockchain.blocks)
+    if (blk.is_blue)
+      ++blue_count;
+
+  uint64_t red_count = total - blue_count;
+  double red_ratio = total > 0 ? (double)red_count / total : 0.0;
+
+  EVENT_DAG_SNAPSHOT(NID, total, blue_count, red_count, red_ratio,
+                     m_blockchain.GetDagWidth(), m_mempool.size());
+
+  ScheduleSnapshot(); // reschedule — keeps firing every interval
 }
 
 } // namespace ns3

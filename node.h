@@ -116,6 +116,11 @@ protected:
   // --- Timeout & Queue Management ---
   void InvTimeoutExpired(std::string block_hash);
 
+  void EmitDagSnapshot();
+  void ScheduleSnapshot();
+  EventId m_snapshotEvent;
+  double m_snapshotInterval = 30.0;
+
   // --- Sockets ---
   Ptr<Socket> m_socket;
   Address m_local;
