@@ -53,17 +53,25 @@ docker run [-v $(pwd):/results] [-e MPI_THREADS=4] ghostdagsim -- <flags>
 
 ## Configuration
 
-Key simulation parameters (see `main.cc` for full list):
+Simulation parameters:
 
 | Parameter | Description | Default |
-|-----------|-------------|---------|
+| --- | --- | --- |
 | `--nodes` | Total number of nodes | 10 |
 | `--miners` | Number of mining nodes | 10 |
-| `--k` | GHOSTDAG k parameter | 10 |
-| `--lambda` | Mean block interval (seconds) | 20 |
+| `--min_conn` | Minimum connections per node | -1 (no restriction > 0) |
+| `--max_conn` | Maximum connections per node | -1 (no restriction <= nodes)|
+| `--lambda` | Mean block interval per miner (seconds) | 20.0 |
 | `--tau` | Propagation delay multiplier | 1.0 |
+| `--pareto_divider` | Propagation latency Pareto distribution shape divider | 5.0 |
+| `--k` | GHOSTDAG k parameter | 10 |
 | `--txs_per_block` | Transactions per block | 100 |
-| `--blocks_per_miner` | Target blocks per miner | 1000 |
+| `--mempool_size` | Mempool size | 10000 |
+| `--tx_fee_lambda` | Mean transaction fee (exponential distribution) | 150.0 |
+| `--tx_gen_interval` | Mean transaction generation interval per node (seconds) | 0.5 |
+| `--blocks_per_miner` | Target number of blocks each miner should produce | 1000 |
+| `--run_name` | Name tag for this simulation run | "run0" |
+| `--graphene` | Use graphene relay handler | false |
 
 ## Output
 
@@ -81,9 +89,10 @@ ghostdagsim/
 ├── main.cc          # Simulation entry point and configuration
 ├── node.{cc,h}      # Node application and network handling
 ├── dag.{cc,h}       # GHOSTDAG consensus implementation
+├── graphene.{cc,h}  # Graphene protocol specifics implementation
 ├── miner.{cc,h}     # Mining node functionality
 ├── mempool.{cc,h}   # Transaction mempool management
-├── metrics.{cc,h}   # Metrics collection and output
+├── metrics.{h}      # Metrics collection and output
 ├── helpers/         # Topology and network helpers
 └── tests/           # Unit tests
 ```
@@ -126,6 +135,12 @@ This project is licensed under **GPL-2.0** (see [LICENSE](LICENSE))
 
 - **json.hpp** (`thirdparty/json.h`): [nlohmann/json](https://github.com/nlohmann/json)
   by Niels Lohmann, MIT License. Included unmodified.
+
+- **Bloom filter** (`thirdparty/bloom_filter.h`): [ArashPartow/bloom](https://github.com/ArashPartow/bloom)
+  by ArashPartow, MIT License. Included unmodified.
+
+- **IBLT** (`thirdparty/iblt.h`): [umass-forensics/IBLT-optimization](https://github.com/umass-forensics/IBLT-optimization) and [gavinandresen/IBLT_Cplusplus](https://github.com/gavinandresen/IBLT_Cplusplus).
+  Originally IBLT_Cplusplus rewrite by graphene research at umass-forensics and changed to header-library only in this work, MIT License (untouched). Included and modified.
 
 ### Attribution
 
