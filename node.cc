@@ -295,6 +295,15 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
                                << " port "
                                << InetSocketAddress::ConvertFrom(from).GetPort()
                                << " with info = " << data.dump(4));
+
+        uint64_t block_id = 0;
+        if (data.contains("block_id"))
+          block_id = data["block_id"].get<uint64_t>();
+        else if (data.contains("block_hash"))
+          block_id = std::stoull(data["block_hash"].get<std::string>());
+        EVENT_MSG_RECV(NID, IPV4_STR(from), GetMessageName((Messages)msg_data),
+                       block_id, parsed_packet.size());
+
         ProcessMessage((enum Messages)msg_data, parsed_packet, from);
       }
     }
@@ -328,6 +337,15 @@ void GhostDagNode::SendMessage(enum Messages recv, enum Messages type,
   const uint8_t delim[] = {MSG_DELIMITER};
   if (it->second->Send(packet) > 0) {
     it->second->Send(delim, 1, 0);
+    uint64_t block_id = 0;
+    if (d.contains("block_id"))
+      block_id = d["block_id"].get<uint64_t>();
+    else if (d.contains("block_hash"))
+      block_id = std::stoull(d["block_hash"].get<std::string>());
+    else if (d.contains("block") && d["block"].contains("block_id"))
+      block_id = d["block"]["block_id"].get<uint64_t>();
+    EVENT_MSG_SENT(NID, IPV4_STR(to), GetMessageName(type), block_id,
+                   serialized.size());
   }
 }
 
@@ -574,8 +592,8 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
 
   EVENT_BLOCK_RECEIVED(NID, new_block.header.block_id, IPV4_STR(from),
                        new_block.GetTotalSize(), new_block.transactions.size(),
-                       already_known_txs,
-                       new_block.header.parent_hashes.size());
+                       already_known_txs, new_block.header.parent_hashes.size(),
+                       new_block.header.time_created);
 
   std::string blockHash = std::to_string(new_block.header.block_id);
   auto timeout_it = m_inv_timeouts.find(blockHash);
@@ -585,13 +603,32 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
   }
   m_queue_inv.erase(blockHash);
 
+  auto before_orphans = m_blockchain.orphans;
   m_blockchain.AddBlock(block);
 
-  uint64_t blue = 0;
-  uint64_t red = 0;
-  for (const auto &[id, blk] : m_blockchain.blocks) {
-    blk.is_blue ? ++blue : ++red;
+  if (m_blockchain.IsOrphan(block.header.block_id)) {
+    std::vector<uint64_t> missing_parents;
+    for (uint64_t p : block.header.parent_hashes)
+      if (!m_blockchain.HasBlock(p))
+        missing_parents.push_back(p);
+    EVENT_BLOCK_ORPHANED(NID, block.header.block_id, missing_parents);
   }
+
+  for (auto &[oid, _] : before_orphans)
+    if (!m_blockchain.IsOrphan(oid))
+      EVENT_BLOCK_UNORPHANED(NID, oid);
+
+  if (m_blockchain.HasBlock(block.header.block_id)) {
+    uint64_t bid = block.header.block_id;
+    EVENT_BLOCK_COLORED(NID, bid, m_blockchain.blocks[bid].is_blue,
+                        m_blockchain.blocks[bid].blue_score,
+                        m_blockchain.GetDagWidth());
+    if (m_blockchain.blocks[bid].is_blue)
+      for (const auto &tx : m_blockchain.blocks[bid].transactions)
+        EVENT_TX_CONFIRMED(NID, tx.tx_id, bid,
+                           m_blockchain.blocks[bid].header.time_created, true);
+  }
+
   BroadcastInvBlock(blockHash, peer.GetIpv4());
 }
 
@@ -969,6 +1006,8 @@ void GhostDagNode::GenerateTransaction() {
     m_known_txs.insert(txId);
     m_txsGenerated++;
 
+    EVENT_TX_GENERATED(NID, txId, fee);
+
     m_pending_inv_tx.push_back(std::to_string(txId));
 
     if (!m_invBatchEvent.IsPending()) {
@@ -1065,11 +1104,26 @@ void GhostDagNode::HandleConnectionSucceeded(Ptr<Socket> socket) {
 
   auto pending_it = m_pending_messages.find(peer_addr);
   if (pending_it != m_pending_messages.end()) {
+    InetSocketAddress peer_sa(peer_addr, m_ghostdag_port);
+    Address to = peer_sa;
     const uint8_t delim[] = {MSG_DELIMITER};
     for (const auto &msg : pending_it->second) {
       Ptr<Packet> packet = Create<Packet>((uint8_t *)msg.c_str(), msg.size());
       if (socket->Send(packet) > 0) {
         socket->Send(delim, 1, 0);
+        auto d = nlohmann::json::parse(msg, nullptr, false);
+        if (!d.is_discarded()) {
+          Messages msg_type = (Messages)d.value("msg", (uint64_t)NO_MESSAGE);
+          uint64_t block_id = 0;
+          if (d.contains("block_id"))
+            block_id = d["block_id"].get<uint64_t>();
+          else if (d.contains("block_hash"))
+            block_id = std::stoull(d["block_hash"].get<std::string>());
+          else if (d.contains("block") && d["block"].contains("block_id"))
+            block_id = d["block"]["block_id"].get<uint64_t>();
+          EVENT_MSG_SENT(NID, IPV4_STR(to), GetMessageName(msg_type), block_id,
+                         msg.size());
+        }
       }
     }
     m_pending_messages.erase(pending_it);

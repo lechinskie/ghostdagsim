@@ -164,7 +164,56 @@ void GhostDagMiner::MineBlock() {
   newBlock.size_in_bytes = newBlock.GetTotalSize();
   newBlock.time_received = currentTime;
 
-  m_blockchain.AddBlock(newBlock);
+  {
+    auto before_orphans = m_blockchain.orphans;
+
+    m_blockchain.AddBlock(newBlock);
+
+    EVENT_BLOCK_MINED(NID, newBlock.header.block_id,
+                      newBlock.header.parent_hashes,
+                      newBlock.header.parent_hashes.size(),
+                      m_blockchain.GetDagWidth());
+
+    {
+      uint64_t sibling_count = 0;
+      for (uint64_t tip : m_blockchain.tips)
+        if (tip != newBlock.header.block_id)
+          ++sibling_count;
+
+      double sibling_overlap = 0.0;
+      if (!newBlock.transactions.empty() && sibling_count > 0) {
+        std::set<uint64_t> sibling_tx_ids;
+        for (uint64_t tip : m_blockchain.tips)
+          if (tip != newBlock.header.block_id)
+            for (const auto &tx : m_blockchain.blocks[tip].transactions)
+              sibling_tx_ids.insert(tx.tx_id);
+        uint64_t overlap = 0;
+        for (const auto &tx : newBlock.transactions)
+          if (sibling_tx_ids.count(tx.tx_id))
+            ++overlap;
+        sibling_overlap = (double)overlap / newBlock.transactions.size();
+      }
+
+      EVENT_BLOCK_TX_COMPETITION(NID, newBlock.header.block_id,
+                                 sibling_overlap, sibling_count);
+    }
+
+    for (auto &[oid, oblk] : before_orphans)
+      if (!m_blockchain.IsOrphan(oid))
+        EVENT_BLOCK_UNORPHANED(NID, oid);
+
+    if (m_blockchain.HasBlock(newBlock.header.block_id)) {
+      uint64_t bid = newBlock.header.block_id;
+      EVENT_BLOCK_COLORED(NID, bid, m_blockchain.blocks[bid].is_blue,
+                          m_blockchain.blocks[bid].blue_score,
+                          m_blockchain.GetDagWidth());
+      if (m_blockchain.blocks[bid].is_blue)
+        for (const auto &tx : m_blockchain.blocks[bid].transactions)
+          EVENT_TX_CONFIRMED(NID, tx.tx_id, bid,
+                             m_blockchain.blocks[bid].header.time_created,
+                             true);
+    }
+  }
 
   NS_LOG_INFO("Miner " << minerId << " mined block " << newBlock.header.block_id
                        << " with " << newBlock.transactions.size()

@@ -169,14 +169,6 @@ private:
     LOG_FIELD("from",          (std::string)(from))                    \
   )
 
-#define EVENT_GRAPHENE_RECOVERY(node, block, from, recovery_bytes) \
-  LOG_EVENT("graphene_recovery",                                   \
-    LOG_FIELD("node",           (uint64_t)(node))                  \
-    LOG_FIELD("block",          (uint64_t)(block))                 \
-    LOG_FIELD("from",           (std::string)(from))               \
-    LOG_FIELD("recovery_bytes", (uint32_t)(recovery_bytes))        \
-  )
-
 #define EVENT_BLOCK_ORPHANED(node, block, missing_parents)  \
   LOG_EVENT("block_orphaned",                               \
     LOG_FIELD("node",            (uint64_t)(node))          \
