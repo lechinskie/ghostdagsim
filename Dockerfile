@@ -29,7 +29,7 @@ ARG NS3_VERSION
 
 LABEL org.opencontainers.image.title="ghostdagsim" \
       org.opencontainers.image.description="GHOSTDAG consensus protocol network simulator (ns-3 + MPI)" \
-      org.opencontainers.image.source="https://github.com/eramoss/ghostdagsim" \
+      org.opencontainers.image.source="https://github.com/lechinskie/ghostdagsim" \
       org.opencontainers.image.licenses="GPL-2.0"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

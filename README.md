@@ -41,7 +41,7 @@ And then configure and run using ns3 facilities:
 ```
 
 You can also build and run with docker
-> Or you can use the pre built docker image [RELEASE](https://github.com/eramoss/ghostdagsim/releases) if you just wanna run changing the parameters, not the code.
+> Or you can use the pre built docker image [RELEASE](https://github.com/lechinskie/ghostdagsim/releases) if you just wanna run changing the parameters, not the code.
 ```bash
 docker build -t ghostdagsim .
 
