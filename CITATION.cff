@@ -9,8 +9,8 @@ authors:
     affiliation: UNIVALI
 repository-code: https://github.com/lechinskie/ghostdagsim
 license: GPL-2.0
-version: 0.1.0
-date-released: 2026-03-23
+version: 0.1.1
+date-released: 2026-05-06
 abstract: >
   An ns-3 based network simulator for the GHOSTDAG consensus protocol,
   supporting MPI distributed simulation, realistic P2P topology, and
