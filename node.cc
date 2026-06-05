@@ -83,11 +83,6 @@ TypeId GhostDagNode::GetTypeId() {
                         MakeDoubleAccessor(&GhostDagNode::m_upload_speed),
                         MakeDoubleChecker<double>())
           .AddAttribute(
-              "FixedBlockInterval",
-              "Fixed interval to generate blocks (seconds).", DoubleValue(1.0),
-              MakeDoubleAccessor(&GhostDagNode::m_fixed_block_interval),
-              MakeDoubleChecker<double>())
-          .AddAttribute(
               "GenerateTransactions", "Whether to generate transactions",
               BooleanValue(true),
               MakeBooleanAccessor(&GhostDagNode::m_generateTransactions),

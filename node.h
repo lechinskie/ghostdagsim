@@ -78,8 +78,7 @@ protected:
   // --- 1. Real-Time Propagation Handlers ---
   void HandleInvRelayBlock(const std::string &block_hash, Address &from);
   void HandleReqRelayBlock(const std::string &block_hash, bool graphene,
-                           Address &from,
-                           uint64_t receiver_mempool_count = 0);
+                           Address &from, uint64_t receiver_mempool_count = 0);
   void HandleBlock(const Block &new_block, Address &from);
 
   // --- 1b. Graphene propagation handlers ---
@@ -126,7 +125,6 @@ protected:
   Blockchain m_blockchain;
   Mempool m_mempool;
   Time m_inv_timeout_minutes;
-  double m_fixed_block_interval;
 
   // --- Network Params ---
   double m_download_speed;
