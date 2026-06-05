@@ -1,4 +1,4 @@
-ARG NS3_VERSION=3.46.1
+ARG NS3_VERSION=3.47
 
 FROM debian:bookworm-slim AS ns3-base
 
