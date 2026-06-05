@@ -90,7 +90,7 @@ ghostdagsim/
 
 ## Contributing
 
-Feel completely free to send me an email (eduardo_ramos@edu.univali.br) asking questions about the project. Any contribution researching and implementing new algorithms and methods are welcome.
+Feel completely free to send me an email (lechinski@univali.br) asking questions about the project. Any contribution researching and implementing new algorithms and methods are welcome.
 
 Here are some additions that i find interesting:
   - Test network stress under different topologies
