@@ -191,26 +191,6 @@ private:
     LOG_FIELD("dag_width",  (uint64_t)(dag_width))                        \
   )
 
-// --- Network messages -------------------------------------------------------
-
-#define EVENT_MSG_SENT(node, peer, msg_type, block, bytes)  \
-  LOG_EVENT("msg_sent",                                     \
-    LOG_FIELD("node",     (uint64_t)(node))                 \
-    LOG_FIELD("peer",     (std::string)(peer))              \
-    LOG_FIELD("msg_type", (std::string)(msg_type))          \
-    LOG_FIELD("block",    (uint64_t)(block))                \
-    LOG_FIELD("bytes",    (uint32_t)(bytes))                \
-  )
-
-#define EVENT_MSG_RECV(node, peer, msg_type, block, bytes)  \
-  LOG_EVENT("msg_recv",                                     \
-    LOG_FIELD("node",     (uint64_t)(node))                 \
-    LOG_FIELD("peer",     (std::string)(peer))              \
-    LOG_FIELD("msg_type", (std::string)(msg_type))          \
-    LOG_FIELD("block",    (uint64_t)(block))                \
-    LOG_FIELD("bytes",    (uint32_t)(bytes))                \
-  )
-
 // --- Transactions -----------------------------------------------------------
 
 #define EVENT_TX_GENERATED(node, tx_id, fee)  \

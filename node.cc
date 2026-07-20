@@ -301,9 +301,6 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
           block_id = data["block_id"].get<uint64_t>();
         else if (data.contains("block_hash"))
           block_id = std::stoull(data["block_hash"].get<std::string>());
-        EVENT_MSG_RECV(NID, IPV4_STR(from), GetMessageName((Messages)msg_data),
-                       block_id, parsed_packet.size());
-
         ProcessMessage((enum Messages)msg_data, parsed_packet, from);
       }
     }
@@ -344,8 +341,6 @@ void GhostDagNode::SendMessage(enum Messages recv, enum Messages type,
       block_id = std::stoull(d["block_hash"].get<std::string>());
     else if (d.contains("block") && d["block"].contains("block_id"))
       block_id = d["block"]["block_id"].get<uint64_t>();
-    EVENT_MSG_SENT(NID, IPV4_STR(to), GetMessageName(type), block_id,
-                   serialized.size());
   }
 }
 
@@ -507,12 +502,12 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
 
   const Block &block = m_blockchain.blocks.at(block_id);
 
+  // Use receiver's mempool count for optimal FPR/IBLT sizing
+  uint64_t mc =
+      receiver_mempool_count > 0 ? receiver_mempool_count : m_mempool.size();
   // If graphene is enabled, send a compact graphene block instead of full.
-  if (m_graphene_enabled && !graphene_failed) {
-    // Use receiver's mempool count for optimal FPR/IBLT sizing
-    uint64_t mc =
-        receiver_mempool_count > 0 ? receiver_mempool_count : m_mempool.size();
-
+  if (m_graphene_enabled && !graphene_failed &&
+      block.transactions.size() > mc) {
     bloom_filter bf{bloom_parameters()};
     IBLT iblt(1, GrapheneProtocol::IBLT_VALUE_SIZE, 1, 1);
 
@@ -1121,8 +1116,6 @@ void GhostDagNode::HandleConnectionSucceeded(Ptr<Socket> socket) {
             block_id = std::stoull(d["block_hash"].get<std::string>());
           else if (d.contains("block") && d["block"].contains("block_id"))
             block_id = d["block"]["block_id"].get<uint64_t>();
-          EVENT_MSG_SENT(NID, IPV4_STR(to), GetMessageName(msg_type), block_id,
-                         msg.size());
         }
       }
     }
