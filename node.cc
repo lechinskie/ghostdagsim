@@ -296,11 +296,6 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
                                << InetSocketAddress::ConvertFrom(from).GetPort()
                                << " with info = " << data.dump(4));
 
-        uint64_t block_id = 0;
-        if (data.contains("block_id"))
-          block_id = data["block_id"].get<uint64_t>();
-        else if (data.contains("block_hash"))
-          block_id = std::stoull(data["block_hash"].get<std::string>());
         ProcessMessage((enum Messages)msg_data, parsed_packet, from);
       }
     }
@@ -334,13 +329,6 @@ void GhostDagNode::SendMessage(enum Messages recv, enum Messages type,
   const uint8_t delim[] = {MSG_DELIMITER};
   if (it->second->Send(packet) > 0) {
     it->second->Send(delim, 1, 0);
-    uint64_t block_id = 0;
-    if (d.contains("block_id"))
-      block_id = d["block_id"].get<uint64_t>();
-    else if (d.contains("block_hash"))
-      block_id = std::stoull(d["block_hash"].get<std::string>());
-    else if (d.contains("block") && d["block"].contains("block_id"))
-      block_id = d["block"]["block_id"].get<uint64_t>();
   }
 }
 
@@ -1100,23 +1088,11 @@ void GhostDagNode::HandleConnectionSucceeded(Ptr<Socket> socket) {
   auto pending_it = m_pending_messages.find(peer_addr);
   if (pending_it != m_pending_messages.end()) {
     InetSocketAddress peer_sa(peer_addr, m_ghostdag_port);
-    Address to = peer_sa;
     const uint8_t delim[] = {MSG_DELIMITER};
     for (const auto &msg : pending_it->second) {
       Ptr<Packet> packet = Create<Packet>((uint8_t *)msg.c_str(), msg.size());
       if (socket->Send(packet) > 0) {
         socket->Send(delim, 1, 0);
-        auto d = nlohmann::json::parse(msg, nullptr, false);
-        if (!d.is_discarded()) {
-          Messages msg_type = (Messages)d.value("msg", (uint64_t)NO_MESSAGE);
-          uint64_t block_id = 0;
-          if (d.contains("block_id"))
-            block_id = d["block_id"].get<uint64_t>();
-          else if (d.contains("block_hash"))
-            block_id = std::stoull(d["block_hash"].get<std::string>());
-          else if (d.contains("block") && d["block"].contains("block_id"))
-            block_id = d["block"]["block_id"].get<uint64_t>();
-        }
       }
     }
     m_pending_messages.erase(pending_it);
