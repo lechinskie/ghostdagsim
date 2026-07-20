@@ -490,15 +490,13 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
 
   const Block &block = m_blockchain.blocks.at(block_id);
 
-  // Use receiver's mempool count for optimal FPR/IBLT sizing
-  uint64_t mc =
-      receiver_mempool_count > 0 ? receiver_mempool_count : m_mempool.size();
   // If graphene is enabled, send a compact graphene block instead of full.
-  if (m_graphene_enabled && !graphene_failed &&
-      block.transactions.size() > mc) {
+  if (m_graphene_enabled && !graphene_failed) {
     bloom_filter bf{bloom_parameters()};
     IBLT iblt(1, GrapheneProtocol::IBLT_VALUE_SIZE, 1, 1);
-
+    // Use receiver's mempool count for optimal FPR/IBLT sizing
+    uint64_t mc =
+        receiver_mempool_count > 0 ? receiver_mempool_count : m_mempool.size();
     GrapheneProtocol::BuildSenderComponents(block.transactions, mc, bf, iblt);
 
     uint64_t tx_checksum = 0;
