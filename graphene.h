@@ -135,14 +135,15 @@ public:
 
   static DecodeStatus TryPingPong(IBLT &first, IBLT &second,
                                   std::set<uint64_t> &in_block,
-                                  std::set<uint64_t> &not_in_block);
+                                  std::set<uint64_t> &not_in_block,
+                                  uint32_t depth);
 
   static std::vector<uint8_t> U64ToVec(uint64_t v);
 
-  static IncomingBlockResult
-  ProcessIncomingBlock(const nlohmann::json &data,
-                       const std::vector<std::pair<uint32_t, uint64_t>> &mempool,
-                       size_t mempool_size);
+  static IncomingBlockResult ProcessIncomingBlock(
+      const nlohmann::json &data,
+      const std::vector<std::pair<uint32_t, uint64_t>> &mempool,
+      size_t mempool_size);
 
   static RecoveryResponseResult
   ProcessRecoveryResponse(const nlohmann::json &data,

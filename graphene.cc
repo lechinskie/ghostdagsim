@@ -410,10 +410,13 @@ GrapheneProtocol::ReconstructRecoveryBlock(const nlohmann::json &data,
   return DecodeStatus::SUCCESS;
 }
 
-GrapheneProtocol::DecodeStatus
-GrapheneProtocol::TryPingPong(IBLT &first, IBLT &second,
-                              std::set<uint64_t> &in_block,
-                              std::set<uint64_t> &not_in_block) {
+GrapheneProtocol::DecodeStatus GrapheneProtocol::TryPingPong(
+    IBLT &first, IBLT &second, std::set<uint64_t> &in_block,
+    std::set<uint64_t> &not_in_block, uint32_t depth = 0) {
+
+  if (depth > (uint32_t)first.hashTableSize()) {
+    return DecodeStatus::FAIL_FATAL;
+  }
 
   std::set<std::pair<uint64_t, std::vector<uint8_t>>> positive;
   std::set<std::pair<uint64_t, std::vector<uint8_t>>> negative;
@@ -446,9 +449,9 @@ GrapheneProtocol::TryPingPong(IBLT &first, IBLT &second,
   }
 
   if (flag)
-    return TryPingPong(first, second, in_block, not_in_block);
+    return TryPingPong(first, second, in_block, not_in_block, depth + 1);
   else
-    return TryPingPong(second, first, in_block, not_in_block);
+    return TryPingPong(second, first, in_block, not_in_block, depth + 1);
 }
 
 nlohmann::json GrapheneProtocol::SerializeBloomFilter(const bloom_filter &bf) {
