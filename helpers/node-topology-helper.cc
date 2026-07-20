@@ -1378,6 +1378,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
   double totalNodeBandwidth = 0;
   double totalNodeLatency = 0;
   int nodeLinkCount = 0;
+  double maxDelay = 0;
 
   for (auto &node : m_nodesConnections) {
     for (auto it = node.second.begin(); it != node.second.end(); it++) {
@@ -1418,6 +1419,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
           currentLatency = baseLatency * m_tau_multiplier;
         }
         totalNodeLatency += currentLatency;
+        maxDelay = std::max(currentLatency, maxDelay);
 
         bandwidthStream.str("");
         bandwidthStream.clear();
@@ -1442,6 +1444,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
       (nodeLinkCount > 0) ? (totalNodeBandwidth / nodeLinkCount) : 0;
   double mean_node_delay =
       (nodeLinkCount > 0) ? (totalNodeLatency / nodeLinkCount) : 0;
+  m_maxDelay = maxDelay / 1000;
 
   tFinish = GetWallTime();
 

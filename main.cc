@@ -29,6 +29,7 @@
 #include "ns3/network-module.h"
 #include "ns3/point-to-point-module.h"
 
+#include <cstdint>
 #include <mpi.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -39,6 +40,23 @@
 #endif
 
 using namespace ns3;
+
+// K selector from proof explorer in KASPA blockchain
+uint32_t select_ghostdag_k(double x, double delta) {
+  uint32_t k_hat = 0;
+  double sigma = 0.0;
+  double fraction = 1.0;
+  double exp_val = exp(-x);
+
+  while (true) {
+    sigma += exp_val * fraction;
+    if (1.0 - sigma < delta) {
+      return k_hat;
+    }
+    k_hat++;
+    fraction *= (x / k_hat);
+  }
+}
 
 double GetWallTime();
 NS_LOG_COMPONENT_DEFINE("GhostDagSimulator");
@@ -81,6 +99,7 @@ int main(int argc, char *argv[]) {
   std::map<uint32_t, NodeInternetSpeeds> nodesInternetSpeeds;
   std::vector<uint32_t> miners;
   bool graphene = false;
+  bool deriveK = false;
 
   enum Region *minersRegions;
   int *minersStrategies;
@@ -96,6 +115,8 @@ int main(int argc, char *argv[]) {
   cmd.AddValue("max_conn", "Maximum connections per node",
                maxConnectionsPerNode);
   cmd.AddValue("lambda", "Mean block interval per miner (seconds)", lambda);
+  cmd.AddValue("derive_k", "Derive k from lambda and measured topology delay",
+               deriveK);
   cmd.AddValue("tau", "Propagation delay multiplier", tau);
   cmd.AddValue("pareto_divider",
                "Propagation latency Pareto distribution shape divider",
@@ -147,47 +168,15 @@ int main(int argc, char *argv[]) {
   uint32_t systemCount = MpiInterface::GetSize();
 
   EventLogger::Get().Init("results/" + metrics_scenario, systemId);
-#ifdef GHOSTDAGSIM_METRICS
-  if (systemId == 0) {
-    nlohmann::json cfg;
-    cfg["lambda"] = lambda;
-    cfg["k"] = ghostdagK;
-    cfg["tau"] = tau;
-    cfg["nodes"] = totalNoNodes;
-    cfg["miners"] = noMiners;
-    cfg["tx_fee_lambda"] = txFeeLambda;
-    cfg["mempool_size"] = mempoolSize;
-    cfg["scenario_name"] = metrics_scenario;
-    cfg["sim_duration_minutes"] = stop;
-    cfg["tx_gen_interval"] = txGenInterval;
-    cfg["txs_per_block"] = txsPerBlock;
-    std::error_code ec;
-    std::filesystem::create_directories("results/" + metrics_scenario, ec);
-    std::ofstream f("results/" + metrics_scenario + "/config.json");
-    f << cfg.dump(2) << "\n";
-  }
-#endif
-
-  if (systemId == 0) {
-    std::cout << "\n=== GHOSTDAG Network Simulator ===\n";
-    std::cout << "Total Nodes:                " << totalNoNodes << "\n";
-    std::cout << "Miners:                     " << noMiners << "\n";
-    std::cout << "GHOSTDAG k:                 " << ghostdagK << "\n";
-    std::cout << "Lambda (block interval):    " << lambda << "s\n";
-    std::cout << "Tau (propagation mult.):    " << tau << "\n";
-    std::cout << "Txs per block:              " << txsPerBlock << "\n";
-    std::cout << "Mempool size:               " << mempoolSize << "\n";
-    std::cout << "Tx fee lambda (mean):       " << txFeeLambda << "\n";
-    std::cout << "Tx gen interval (mean):     " << txGenInterval << "s\n";
-    std::cout << "Target blocks per miner:    " << targetBlocksPerMiner << "\n";
-    std::cout << "Expected total DAG blocks:  "
-              << targetBlocksPerMiner * noMiners << "\n";
-    std::cout << "Simulation duration:        " << stop << " minutes\n\n";
-  }
 
   GhostDagTopologyHelper topologyHelper(
       systemCount, totalNoNodes, noMiners, minersRegions, minConnectionsPerNode,
       maxConnectionsPerNode, pareto_shape_divider, tau, systemId);
+
+  if (deriveK) {
+    double maxDelay = topologyHelper.m_maxDelay;
+    ghostdagK = select_ghostdag_k(2.0 * lambda * maxDelay, 0.01);
+  }
 
   InternetStackHelper stack;
   topologyHelper.InstallStack(stack);
@@ -230,6 +219,47 @@ int main(int argc, char *argv[]) {
   }
 
   ghostdagMiners.Start(Seconds(0));
+#ifdef GHOSTDAGSIM_METRICS
+  if (systemId == 0) {
+    nlohmann::json cfg;
+    cfg["lambda"] = lambda;
+    cfg["k"] = ghostdagK;
+    cfg["tau"] = tau;
+    cfg["nodes"] = totalNoNodes;
+    cfg["miners"] = noMiners;
+    cfg["tx_fee_lambda"] = txFeeLambda;
+    cfg["mempool_size"] = mempoolSize;
+    cfg["scenario_name"] = metrics_scenario;
+    cfg["sim_duration_minutes"] = stop;
+    cfg["tx_gen_interval"] = txGenInterval;
+    cfg["txs_per_block"] = txsPerBlock;
+    cfg["graphene"] = graphene;
+    cfg["min_conn"] = minConnectionsPerNode;
+    cfg["max_conn"] = maxConnectionsPerNode;
+    cfg["max_delay"] = topologyHelper.m_maxDelay;
+    std::error_code ec;
+    std::filesystem::create_directories("results/" + metrics_scenario, ec);
+    std::ofstream f("results/" + metrics_scenario + "/config.json");
+    f << cfg.dump(2) << "\n";
+  }
+#endif
+
+  if (systemId == 0) {
+    std::cout << "\n=== GHOSTDAG Network Simulator ===\n";
+    std::cout << "Total Nodes:                " << totalNoNodes << "\n";
+    std::cout << "Miners:                     " << noMiners << "\n";
+    std::cout << "GHOSTDAG k:                 " << ghostdagK << "\n";
+    std::cout << "Lambda (block interval):    " << lambda << "s\n";
+    std::cout << "Tau (propagation mult.):    " << tau << "\n";
+    std::cout << "Txs per block:              " << txsPerBlock << "\n";
+    std::cout << "Mempool size:               " << mempoolSize << "\n";
+    std::cout << "Tx fee lambda (mean):       " << txFeeLambda << "\n";
+    std::cout << "Tx gen interval (mean):     " << txGenInterval << "s\n";
+    std::cout << "Target blocks per miner:    " << targetBlocksPerMiner << "\n";
+    std::cout << "Expected total DAG blocks:  "
+              << targetBlocksPerMiner * noMiners << "\n";
+    std::cout << "Simulation duration:        " << stop << " minutes\n\n";
+  }
   ghostdagMiners.Stop(Minutes(stop));
 
   ApplicationContainer ghostdagNodes;

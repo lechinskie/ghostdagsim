@@ -68,7 +68,7 @@ public:
                          int minConnectionsPerNode, int maxConnectionsPerNode,
                          double latencyParetoShapeDivider,
                          double tau_multiplier, uint32_t systemId);
-
+  double m_maxDelay;
   ~GhostDagTopologyHelper();
 
   /**
