@@ -565,7 +565,6 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
     uint32_t miner_id = IdFromTxId(tx.tx_id);
     HtabIterator it = m_mempool.find(miner_id, tx.tx_id);
     if (it.isValid()) {
-      m_mempool.eraseTransaction(it);
       already_known_txs++;
     }
     m_known_txs.insert(tx.tx_id);
@@ -604,6 +603,15 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
     EVENT_BLOCK_COLORED(NID, bid, m_blockchain.blocks[bid].is_blue,
                         m_blockchain.blocks[bid].blue_score,
                         m_blockchain.GetDagWidth());
+
+    for (const auto &tx : block.transactions) {
+      uint32_t miner_id = IdFromTxId(tx.tx_id);
+      HtabIterator it = m_mempool.find(miner_id, tx.tx_id);
+      if (it.isValid()) {
+        if (m_blockchain.blocks[bid].is_blue)
+          m_mempool.eraseTransaction(it);
+      }
+    }
     if (m_blockchain.blocks[bid].is_blue)
       for (const auto &tx : m_blockchain.blocks[bid].transactions)
         EVENT_TX_CONFIRMED(NID, tx.tx_id, bid,
