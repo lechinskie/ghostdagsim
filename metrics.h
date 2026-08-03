@@ -76,11 +76,11 @@ private:
   EventLogger(const EventLogger &) = delete;
   EventLogger &operator=(const EventLogger &) = delete;
 
-  static constexpr size_t FLUSH_THRESHOLD = 1 * 1024 * 1024;
+  static constexpr size_t FLUSH_THRESHOLD = 8 * 1024;
 
   std::ofstream m_file;
   std::string m_buffer;
-  char m_io_buffer[4 * 1024 * 1024];
+  char m_io_buffer[16 * 1024];
   bool m_enabled;
 };
 
@@ -203,24 +203,6 @@ private:
   )
 
 // --- Transactions -----------------------------------------------------------
-
-#define EVENT_TX_GENERATED(node, tx_id, fee)  \
-  LOG_EVENT("tx_generated",                   \
-    LOG_FIELD("node",  (uint64_t)(node))      \
-    LOG_FIELD("tx_id", (uint64_t)(tx_id))     \
-    LOG_FIELD("fee",   (uint32_t)(fee))       \
-  )
-
-#define EVENT_TX_CONFIRMED(node, tx_id, block, gen_t, is_blue)   \
-  LOG_EVENT("tx_confirmed",                                      \
-    LOG_FIELD("node",    (uint64_t)(node))                       \
-    LOG_FIELD("tx_id",   (uint64_t)(tx_id))                      \
-    LOG_FIELD("block",   (uint64_t)(block))                      \
-    LOG_FIELD("gen_t",   (double)(gen_t))                        \
-    LOG_FIELD("latency", ns3::Simulator::Now().GetSeconds()      \
-                           - (double)(gen_t))                    \
-    LOG_FIELD("is_blue", (bool)(is_blue))                        \
-  )
 
 #define EVENT_BLOCK_TX_COMPETITION(node, block, sibling_overlap, sibling_count) \
   LOG_EVENT("block_tx_competition",                                             \

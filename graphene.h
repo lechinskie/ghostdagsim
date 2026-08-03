@@ -109,13 +109,13 @@ struct RecoveryResponseResult {
 
 class GrapheneProtocol {
 public:
-  static constexpr size_t IBLT_VALUE_SIZE = sizeof(uint64_t);
+  static constexpr size_t IBLT_VALUE_SIZE = 12;
 
   enum class DecodeStatus { SUCCESS, FAIL_RECOVERABLE, FAIL_FATAL };
 
-  static size_t BuildSenderComponents(const std::set<Transaction> &block_txs,
-                                      size_t receiver_mempool_count,
-                                      bloom_filter &out_bf, IBLT &out_iblt);
+  static bool BuildSenderComponents(const std::set<Transaction> &block_txs,
+                                    size_t receiver_mempool_count,
+                                    bloom_filter &out_bf, IBLT &out_iblt);
 
   static DecodeStatus ReconstructBlock(
       const bloom_filter &bf, const IBLT &sender_iblt, size_t tx_count,

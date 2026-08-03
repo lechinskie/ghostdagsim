@@ -517,30 +517,33 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
     bloom_filter bf{bloom_parameters()};
     IBLT iblt(1, GrapheneProtocol::IBLT_VALUE_SIZE, 1.0f, 2);
     uint64_t mc = receiver_mempool_count;
-    GrapheneProtocol::BuildSenderComponents(block.transactions, mc, bf, iblt);
+    if (GrapheneProtocol::BuildSenderComponents(block.transactions, mc, bf,
+                                                iblt)) {
+      uint64_t tx_checksum = 0;
+      for (const auto &tx : block.transactions) {
+        tx_checksum ^= tx.tx_id;
+      }
 
-    uint64_t tx_checksum = 0;
-    for (const auto &tx : block.transactions) {
-      tx_checksum ^= tx.tx_id;
+      nlohmann::json gm;
+      gm["block_hash"] = block_hash;
+      gm["block_id"] = block.header.block_id;
+      gm["miner_id"] = block.header.miner_id;
+      gm["time_created"] = block.header.time_created;
+      gm["parent_hashes"] = nlohmann::json::array();
+      for (uint64_t parent : block.header.parent_hashes) {
+        gm["parent_hashes"].push_back(parent);
+      }
+      gm["tx_count"] = block.transactions.size();
+      gm["bloom_filter"] = GrapheneProtocol::SerializeBloomFilter(bf);
+      gm["iblt"] = GrapheneProtocol::SerializeIBLT(iblt);
+      gm["tx_checksum"] = tx_checksum;
+      gm["fpr"] = bf.effective_fpp();
+
+      SendMessage(NO_MESSAGE, GRAPHENE_BLOCK, gm.dump(), from);
+      return;
     }
-
-    nlohmann::json gm;
-    gm["block_hash"] = block_hash;
-    gm["block_id"] = block.header.block_id;
-    gm["miner_id"] = block.header.miner_id;
-    gm["time_created"] = block.header.time_created;
-    gm["parent_hashes"] = nlohmann::json::array();
-    for (uint64_t parent : block.header.parent_hashes) {
-      gm["parent_hashes"].push_back(parent);
-    }
-    gm["tx_count"] = block.transactions.size();
-    gm["bloom_filter"] = GrapheneProtocol::SerializeBloomFilter(bf);
-    gm["iblt"] = GrapheneProtocol::SerializeIBLT(iblt);
-    gm["tx_checksum"] = tx_checksum;
-    gm["fpr"] = bf.effective_fpp();
-
-    SendMessage(NO_MESSAGE, GRAPHENE_BLOCK, gm.dump(), from);
-    return;
+    // Receiver mempool too small for Graphene to pay off: fall through to the
+    // full block relay below.
   }
 
   // Fallback: send full block
@@ -609,6 +612,30 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
 
   m_blockchain.AddBlock(block);
 
+  {
+    uint64_t sibling_count = 0;
+    for (uint64_t tip : m_blockchain.tips)
+      if (tip != block.header.block_id)
+        ++sibling_count;
+
+    double sibling_overlap = 0.0;
+    if (!block.transactions.empty() && sibling_count > 0) {
+      std::set<uint64_t> sibling_tx_ids;
+      for (uint64_t tip : m_blockchain.tips)
+        if (tip != block.header.block_id)
+          for (const auto &tx : m_blockchain.blocks[tip].transactions)
+            sibling_tx_ids.insert(tx.tx_id);
+      uint64_t overlap = 0;
+      for (const auto &tx : block.transactions)
+        if (sibling_tx_ids.count(tx.tx_id))
+          ++overlap;
+      sibling_overlap = (double)overlap / block.transactions.size();
+    }
+
+    EVENT_BLOCK_TX_COMPETITION(NID, block.header.block_id, sibling_overlap,
+                               sibling_count);
+  }
+
   if (m_blockchain.IsOrphan(block.header.block_id)) {
     std::vector<uint64_t> missing_parents;
     for (uint64_t p : block.header.parent_hashes)
@@ -640,8 +667,6 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
         HtabIterator it = m_mempool.find(miner_id, tx.tx_id);
         if (it.isValid())
           m_mempool.eraseTransaction(it);
-
-        EVENT_TX_CONFIRMED(NID, tx.tx_id, id, blk.header.time_created, true);
       }
     }
   }
@@ -1090,8 +1115,6 @@ void GhostDagNode::GenerateTransaction() {
     m_mempool.insert(GetNode()->GetId(), txId, fee);
     m_known_txs.insert(txId);
     m_txsGenerated++;
-
-    EVENT_TX_GENERATED(NID, txId, fee);
 
     m_pending_inv_tx.push_back(std::to_string(txId));
 

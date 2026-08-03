@@ -30,6 +30,7 @@ const uint8_t IBLT_CELL_SIZE = GrapheneProtocol::IBLT_VALUE_SIZE;
 const uint32_t LARGE_MEM_POOL_SIZE = 10000000;
 const float FILTER_FPR_MAX = 0.999;
 const uint8_t IBLT_CELL_MINIMUM = 2;
+const uint32_t GRAPHENE_MAX_GUARANTEED_MISSING = 16;
 
 namespace {
 
@@ -209,34 +210,41 @@ std::vector<uint8_t> GrapheneProtocol::U64ToVec(uint64_t v) {
 
 //  Sender — Protocol 1
 
-size_t
-GrapheneProtocol::BuildSenderComponents(const std::set<Transaction> &block_txs,
-                                        size_t receiver_mempool_count,
-                                        bloom_filter &out_bf, IBLT &out_iblt) {
+bool GrapheneProtocol::BuildSenderComponents(
+    const std::set<Transaction> &block_txs, size_t receiver_mempool_count,
+    bloom_filter &out_bf, IBLT &out_iblt) {
 
   size_t n = block_txs.size();
   size_t m = receiver_mempool_count;
 
-  // Optimal symmetric differences between receiver and sender IBLTs
-  // This is the parameter "a" from the graphene paper
+  uint64_t guaranteed_missing = (n > m) ? (n - m) : 0;
+
+  if (guaranteed_missing > GRAPHENE_MAX_GUARANTEED_MISSING)
+    return false;
+
   double optSymDiff = 1;
-  try {
-    if (n < m + 1)
+  if (m > n) {
+    try {
       optSymDiff = OptimalSymDiff(n, m);
-  } catch (const std::runtime_error &e) {
+    } catch (const std::runtime_error &e) {
+      optSymDiff = 1;
+    }
+  } else {
+    optSymDiff = std::max<uint64_t>(guaranteed_missing, 1);
   }
 
-  // Sender's estimate of number of items in both block and receiver mempool
-  // This is the parameter "mu" from the graphene paper
-  uint64_t nItemIntersect = std::min(n, (uint64_t)m);
-
-  // Set false positive rate for Bloom filter based on optSymDiff
   double fpr;
-  uint64_t nReceiverExcessItems = m - nItemIntersect;
-  if (optSymDiff >= nReceiverExcessItems)
-    fpr = FILTER_FPR_MAX;
-  else
-    fpr = optSymDiff / float(nReceiverExcessItems);
+  if (m > n) {
+    uint64_t nReceiverExcessItems = m - n;
+    fpr = (optSymDiff >= nReceiverExcessItems)
+              ? FILTER_FPR_MAX
+              : optSymDiff / double(nReceiverExcessItems);
+  } else {
+    uint64_t nReceiverPoolItems = std::max<uint64_t>(m, 1);
+    fpr = (optSymDiff >= nReceiverPoolItems)
+              ? FILTER_FPR_MAX
+              : optSymDiff / double(nReceiverPoolItems);
+  }
 
   bloom_parameters params;
   params.projected_element_count = std::max((int)n, (int)10);
@@ -257,7 +265,7 @@ GrapheneProtocol::BuildSenderComponents(const std::set<Transaction> &block_txs,
                   params_iblt.numhashes);
   BuildIBLTFromIds(out_iblt, ids);
 
-  return n;
+  return true;
 }
 
 //  Receiver — Protocol 1
