@@ -179,7 +179,8 @@ int main(int argc, char *argv[]) {
 
   if (deriveK) {
     double maxDelay = topologyHelper.m_maxDelay;
-    ghostdagK = select_ghostdag_k(2.0 * lambda * maxDelay, 0.01);
+    double rate = noMiners / lambda;
+    ghostdagK = select_ghostdag_k(2.0 * rate * maxDelay, 0.01);
   }
 
   InternetStackHelper stack;
