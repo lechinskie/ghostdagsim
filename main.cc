@@ -245,6 +245,9 @@ int main(int argc, char *argv[]) {
     cfg["min_conn"] = minConnectionsPerNode;
     cfg["max_conn"] = maxConnectionsPerNode;
     cfg["max_delay"] = topologyHelper.m_maxDelay;
+    auto *regions = topologyHelper.GetNodesRegions();
+    for (int i = 0; i < totalNoNodes; i++)
+      cfg["node_regions"][std::to_string(i)] = regions[i];
     std::error_code ec;
     std::filesystem::create_directories("results/" + metrics_scenario, ec);
     std::ofstream f("results/" + metrics_scenario + "/config.json");
