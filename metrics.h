@@ -149,11 +149,15 @@ private:
     LOG_FIELD("prop_latency", ns3::Simulator::Now().GetSeconds() - (double)(time_created))  \
   )
 
-#define EVENT_BLOCK_GRAPHENE_FALLBACK(node, block, from)               \
+// reason: "p2_failed" (Protocol 2 response did not decode) or "timeout"
+// (no Protocol 2 response within the recovery timeout); either way the
+// receiver then requests the full block.
+#define EVENT_BLOCK_GRAPHENE_FALLBACK(node, block, from, reason)       \
   LOG_EVENT("block_graphene_fallback",                                 \
     LOG_FIELD("node",          (uint64_t)(node))                       \
     LOG_FIELD("block",         (uint64_t)(block))                      \
     LOG_FIELD("from",          (std::string)(from))                    \
+    LOG_FIELD("reason",        (std::string)(reason))                  \
   )
 
 #define EVENT_BLOCK_GRAPHENE_SUCCESS(node, block, from)                \
@@ -195,6 +199,17 @@ private:
 
 #define EVENT_MSG_RECV(node, peer, msg_type, block, bytes)  \
   LOG_EVENT("msg_recv",                                     \
+    LOG_FIELD("node",     (uint64_t)(node))                 \
+    LOG_FIELD("peer",     (std::string)(peer))              \
+    LOG_FIELD("msg_type", (std::string)(msg_type))          \
+    LOG_FIELD("block",    (uint64_t)(block))                \
+    LOG_FIELD("bytes",    (uint32_t)(bytes))                \
+  )
+
+// Bytes a node puts on the wire while fetching a block (getdata, Graphene
+// recovery request), so that per-delivery byte totals include both directions.
+#define EVENT_MSG_SENT(node, peer, msg_type, block, bytes)  \
+  LOG_EVENT("msg_sent",                                     \
     LOG_FIELD("node",     (uint64_t)(node))                 \
     LOG_FIELD("peer",     (std::string)(peer))              \
     LOG_FIELD("msg_type", (std::string)(msg_type))          \

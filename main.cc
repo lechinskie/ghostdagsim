@@ -41,21 +41,35 @@
 
 using namespace ns3;
 
-// K selector from proof explorer in KASPA blockchain
-uint32_t select_ghostdag_k(double x, double delta) {
+// Anticone bound from the Poisson tail of PHANTOM/GHOSTDAG: the smallest k
+// with P[Pois(2c) > k] < delta, where c = D * lambda. This is the bound used to
+// derive and calibrate k.
+uint32_t select_ghostdag_k(double c, double delta) {
+  const double x = 2.0 * c;
   uint32_t k_hat = 0;
-  double sigma = 0.0;
-  double fraction = 1.0;
-  double exp_val = exp(-x);
+  double cdf = 0.0;
+  double term = std::exp(-x); // P[Pois(x) = k_hat]
 
   while (true) {
-    sigma += exp_val * fraction;
-    if (1.0 - sigma < delta) {
+    cdf += term;
+    if (1.0 - cdf < delta) {
       return k_hat;
     }
     k_hat++;
-    fraction *= (x / k_hat);
+    term *= x / k_hat;
   }
+}
+
+// Full PHANTOM bound, max{ P[Pois(2c) > k], 2c / (k + 2c) } < delta
+// (Sompolinsky et al.). Reported alongside the Poisson-tail k as a security
+// reference; it grows roughly as 2c / delta.
+uint32_t select_phantom_full_k(double c, double delta) {
+  const double x = 2.0 * c;
+  uint32_t k_hat = select_ghostdag_k(c, delta);
+  while (x > 0.0 && x / (k_hat + x) >= delta) {
+    k_hat++;
+  }
+  return k_hat;
 }
 
 double GetWallTime();
@@ -81,6 +95,8 @@ int main(int argc, char *argv[]) {
   int mempoolSize = 10000;
   double txFeeLambda = 150.0;
   double txGenInterval = 0.5;
+  double txLoad = 0.0;
+  double snapshotInterval = 30.0;
   double invTimeoutSeconds = 20.0;
 
   int targetBlocksPerMiner = 1000;
@@ -101,6 +117,8 @@ int main(int argc, char *argv[]) {
   std::vector<uint32_t> miners;
   bool graphene = false;
   bool deriveK = false;
+  double delta = 0.01;
+  double dmax = 0.0;
 
   enum Region *minersRegions;
   int *minersStrategies;
@@ -118,6 +136,13 @@ int main(int argc, char *argv[]) {
   cmd.AddValue("lambda", "Mean block interval per miner (seconds)", lambda);
   cmd.AddValue("derive_k", "Derive k from lambda and measured topology delay",
                deriveK);
+  cmd.AddValue("delta", "GHOSTDAG target error rate used by --derive_k",
+               delta);
+  cmd.AddValue("dmax",
+               "Propagation bound D_max in seconds for --derive_k: the 95th "
+               "percentile of block propagation delay measured in a pilot run "
+               "(Rcode/08_dmax_calibration.R)",
+               dmax);
   cmd.AddValue("tau", "Propagation delay multiplier", tau);
   cmd.AddValue("pareto_divider",
                "Propagation latency Pareto distribution shape divider",
@@ -130,6 +155,14 @@ int main(int argc, char *argv[]) {
   cmd.AddValue("tx_gen_interval",
                "Mean transaction generation interval per node (seconds)",
                txGenInterval);
+  cmd.AddValue("tx_load",
+               "If > 0, set tx_gen_interval so the offered transaction rate is "
+               "tx_load times the block capacity (miners / lambda * "
+               "txs_per_block); overrides --tx_gen_interval",
+               txLoad);
+  cmd.AddValue("snapshot_interval",
+               "Seconds between DAG snapshot events per node (0 disables)",
+               snapshotInterval);
   cmd.AddValue("blocks_per_miner",
                "Target number of blocks each miner should produce",
                targetBlocksPerMiner);
@@ -145,6 +178,15 @@ int main(int argc, char *argv[]) {
     std::cerr << "Error: number of miners (" << noMiners
               << ") cannot exceed total nodes (" << totalNoNodes << ")\n";
     return 1;
+  }
+
+  // Only non-miners generate transactions, each as a Poisson process of mean
+  // interval txGenInterval, so the offered rate is (nodes - miners) /
+  // txGenInterval. Matching it to tx_load * (miners / lambda) * txsPerBlock
+  // keeps the load proportional to block capacity across block rates.
+  if (txLoad > 0.0) {
+    txGenInterval = (totalNoNodes - noMiners) * lambda /
+                    (noMiners * static_cast<double>(txsPerBlock) * txLoad);
   }
 
   minersRegions = new enum Region[noMiners];
@@ -177,10 +219,19 @@ int main(int argc, char *argv[]) {
       systemCount, totalNoNodes, noMiners, minersRegions, minConnectionsPerNode,
       maxConnectionsPerNode, pareto_shape_divider, tau, systemId);
 
+  // k is fixed at inception from the assumed propagation bound, as in
+  // GHOSTDAG. The bound is the empirical D_max of a pilot run, not a property
+  // of the topology, so it has to be supplied.
+  uint32_t phantomFullK = 0;
   if (deriveK) {
-    double maxDelay = topologyHelper.m_maxDelay;
+    if (dmax <= 0.0) {
+      std::cerr << "Error: --derive_k needs --dmax=<seconds>, the 95th "
+                   "percentile of block propagation delay from a pilot run\n";
+      return 1;
+    }
     double rate = noMiners / lambda;
-    ghostdagK = select_ghostdag_k(2.0 * rate * maxDelay, 0.01);
+    ghostdagK = select_ghostdag_k(rate * dmax, delta);
+    phantomFullK = select_phantom_full_k(rate * dmax, delta);
   }
 
   InternetStackHelper stack;
@@ -208,7 +259,7 @@ int main(int argc, char *argv[]) {
           peersUploadSpeeds[minerId], nodesInternetSpeeds[minerId]);
 
       minerHelper.SetAttribute("Kghostdag",
-                               UintegerValue(static_cast<uint8_t>(ghostdagK)));
+                               UintegerValue(ghostdagK));
       minerHelper.SetAttribute("BlockGenInterval", DoubleValue(lambda));
       minerHelper.SetAttribute("TxsPerBlock", UintegerValue(txsPerBlock));
       minerHelper.SetAttribute("TxSelectionStrategy",
@@ -218,6 +269,7 @@ int main(int argc, char *argv[]) {
 
       minerHelper.SetAttribute("TxGenInterval", DoubleValue(txGenInterval));
       minerHelper.SetAttribute("GrapheneEnabled", BooleanValue(graphene));
+      minerHelper.SetAttribute("SnapshotInterval", DoubleValue(snapshotInterval));
       minerHelper.SetAttribute("InvTimeoutMinutes",
                                TimeValue(Seconds(invTimeoutSeconds)));
 
@@ -231,7 +283,14 @@ int main(int argc, char *argv[]) {
     nlohmann::json cfg;
     cfg["lambda"] = lambda;
     cfg["k"] = ghostdagK;
+    cfg["derive_k"] = deriveK;
+    cfg["delta"] = delta;
+    cfg["dmax"] = dmax;
+    if (deriveK)
+      cfg["k_phantom_full"] = phantomFullK;
     cfg["tau"] = tau;
+    cfg["pareto_divider"] = pareto_shape_divider;
+    cfg["blocks_per_miner"] = targetBlocksPerMiner;
     cfg["nodes"] = totalNoNodes;
     cfg["miners"] = noMiners;
     cfg["tx_fee_lambda"] = txFeeLambda;
@@ -239,6 +298,8 @@ int main(int argc, char *argv[]) {
     cfg["scenario_name"] = metrics_scenario;
     cfg["sim_duration_minutes"] = stop;
     cfg["tx_gen_interval"] = txGenInterval;
+    cfg["tx_load"] = txLoad;
+    cfg["snapshot_interval"] = snapshotInterval;
     cfg["txs_per_block"] = txsPerBlock;
     cfg["graphene"] = graphene;
     cfg["inv_timeout_seconds"] = invTimeoutSeconds;
@@ -285,11 +346,13 @@ int main(int argc, char *argv[]) {
             nodesInternetSpeeds[node.first]);
 
         nodeHelper.SetAttribute("Kghostdag",
-                                UintegerValue(static_cast<uint8_t>(ghostdagK)));
+                                UintegerValue(ghostdagK));
         nodeHelper.SetAttribute("MempoolSize", UintegerValue(mempoolSize));
         nodeHelper.SetAttribute("TxFeeLambda", DoubleValue(txFeeLambda));
         nodeHelper.SetAttribute("TxGenInterval", DoubleValue(txGenInterval));
         nodeHelper.SetAttribute("GrapheneEnabled", BooleanValue(graphene));
+        nodeHelper.SetAttribute("SnapshotInterval",
+                                DoubleValue(snapshotInterval));
         nodeHelper.SetAttribute("InvTimeoutMinutes",
                                 TimeValue(Seconds(invTimeoutSeconds)));
 

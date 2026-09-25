@@ -72,6 +72,12 @@ Simulation parameters:
 | `--blocks_per_miner` | Target number of blocks each miner should produce | 1000 |
 | `--run_name` | Name tag for this simulation run | "run0" |
 | `--graphene` | Use graphene relay handler | false |
+| `--derive_k` | Derive k from `--dmax`, the block rate and `--delta` (Poisson-tail bound) | false |
+| `--dmax` | Propagation bound D_max in seconds for `--derive_k`: p95 block propagation delay of a pilot run (`Rcode/08_dmax_calibration.R`) | 0 |
+| `--delta` | GHOSTDAG target error rate for `--derive_k` | 0.01 |
+| `--tx_load` | If > 0, set `--tx_gen_interval` so offered transactions = tx_load × block capacity | 0 |
+| `--snapshot_interval` | Seconds between per-node DAG snapshot events (0 disables) | 30 |
+| `--inv_timeout` | Seconds before a block/tx request is retried with the next announcer | 20 |
 
 ## Output
 

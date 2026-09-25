@@ -100,6 +100,9 @@ struct IncomingBlockResult {
   Block block;
   GrapheneState recovery_state;
   nlohmann::json recovery_request;
+  // Recovery Bloom filter sizing, for the message-size model
+  size_t recovery_z = 0;
+  double recovery_fpr = 0.0;
 };
 
 struct RecoveryResponseResult {
@@ -115,7 +118,8 @@ public:
 
   static bool BuildSenderComponents(const std::set<Transaction> &block_txs,
                                     size_t receiver_mempool_count,
-                                    bloom_filter &out_bf, IBLT &out_iblt);
+                                    bloom_filter &out_bf, IBLT &out_iblt,
+                                    double &out_fpr);
 
   static DecodeStatus ReconstructBlock(
       const bloom_filter &bf, const IBLT &sender_iblt, size_t tx_count,
@@ -125,7 +129,8 @@ public:
   static size_t BuildRecoveryBloom(const std::vector<uint64_t> &Z,
                                    const size_t m, const size_t n,
                                    double sender_fpr, bloom_filter &out_bf,
-                                   int &out_b, int &out_y_star);
+                                   int &out_b, int &out_y_star,
+                                   double &out_fpr);
 
   static IBLT SecondIBLT(const Block &blk, const bloom_filter &receiver_bloom,
                          int y_star, int b, std::vector<uint64_t> &missing);

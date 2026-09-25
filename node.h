@@ -32,13 +32,36 @@
 #include "ns3/application.h"
 #include "ns3/ipv4-address.h"
 #include "ns3/ptr.h"
+#include "ns3/packet.h"
 #include "ns3/socket.h"
+#include "ns3/tag.h"
 #include "ns3/traced-callback.h"
+
+#include <deque>
 
 #include <map>
 #include <unordered_set>
 
 namespace ns3 {
+
+/**
+ * Carries a message's JSON payload alongside its frame. The frame on the wire
+ * is sized by the message-size model (see WireSize* in node.cc), not by the
+ * JSON encoding, so the payload travels as a byte tag on the frame's last byte
+ * and does not count towards the bytes transmitted.
+ */
+class GhostDagPayloadTag : public Tag {
+public:
+  static TypeId GetTypeId();
+  TypeId GetInstanceTypeId() const override;
+  uint32_t GetSerializedSize() const override;
+  void Serialize(TagBuffer i) const override;
+  void Deserialize(TagBuffer i) override;
+  void Print(std::ostream &os) const override;
+
+  std::string payload;
+};
+
 class GhostDagNode : public Application {
 public:
   static TypeId GetTypeId();
@@ -73,7 +96,7 @@ protected:
 
   // --- Message Dispatcher ---
   void ProcessMessage(enum Messages msg_type, const std::string &payload,
-                      Address &from);
+                      Address &from, uint32_t wire_bytes);
 
   // --- 1. Real-Time Propagation Handlers ---
   void HandleInvRelayBlock(const std::string &block_hash, Address &from);
@@ -103,7 +126,21 @@ protected:
 
   // --- Sending Helpers ---
   void SendMessage(enum Messages recv, enum Messages type, std::string payload,
-                   Address &to);
+                   Address &to, uint32_t wire_bytes);
+  void EnqueueFrame(Ptr<Socket> socket, const std::string &serialized,
+                    uint32_t wire_bytes);
+  void HandleSendReady(Ptr<Socket> socket, uint32_t available);
+
+  // --- Message-size model (bytes on the wire) ---
+  uint32_t WireSizeInv() const;
+  uint32_t WireSizeBlock(const Block &block) const;
+  uint32_t WireSizeGrapheneBlock(size_t n_parents, size_t n_txs, double fpr,
+                                 const IBLT &iblt) const;
+  uint32_t WireSizeRecoveryRequest(size_t z, double fpr_r) const;
+  uint32_t WireSizeRecoveryResponse(const IBLT &iblt,
+                                    size_t n_missing) const;
+  uint32_t WireSizeTxInv(size_t n_txs) const;
+  uint32_t WireSizeTxs(size_t n_txs) const;
   void BroadcastInvBlock(const std::string &block_hash,
                          Ipv4Address exclude = Ipv4Address());
   void BroadcastInvTransactions(const std::vector<std::string> &,
@@ -151,19 +188,31 @@ protected:
   // --- Block-propagation State ---
   std::map<std::string, std::vector<Address>> m_queue_inv;
   std::map<std::string, EventId> m_inv_timeouts;
-  std::map<Address, std::string> m_buffered_data;
+  // Per-connection frame reassembly (receive side)
+  struct RxFrameState {
+    uint8_t prefix[8];
+    uint32_t prefix_have = 0;
+    uint32_t frame_len = 0;
+    uint32_t body_remaining = 0;
+  };
+  std::map<Ptr<Socket>, RxFrameState> m_rx_state;
+  // Frames waiting for TCP send-buffer space (send side)
+  std::map<Ptr<Socket>, std::deque<Ptr<Packet>>> m_tx_queue;
   std::map<std::string, Block> m_only_headers_received;
-  std::map<Ipv4Address, std::vector<std::string>> m_pending_messages;
+  std::map<Ipv4Address, std::vector<std::pair<std::string, uint32_t>>>
+      m_pending_messages;
 
   bool m_graphene_enabled;
 
   // --- Port / Sizes ---
   int m_ghostdag_port;
-  uint8_t m_ghostdag_k;
+  uint32_t m_ghostdag_k;
   int m_seconds_per_min;
   int m_message_header_size;
   int m_inventory_size;
   int m_headers_size;
+  int m_parent_hash_size;
+  int m_transaction_size;
 
   // --- Transaction Generation ---
   bool m_generateTransactions;

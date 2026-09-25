@@ -17,6 +17,14 @@ RUN wget -q https://www.nsnam.org/release/ns-allinone-${NS3_VERSION}.tar.bz2 && 
 
 WORKDIR /opt/ns-allinone-${NS3_VERSION}/ns-${NS3_VERSION}
 
+# ghostdagsim carries each message's payload as a byte tag, so a TCP segment
+# crossing MPI ranks can exceed ns-3's hard-coded 2000-byte MPI buffer.
+RUN sed -i 's/^const uint32_t MAX_MPI_MSG_SIZE = 2000;/const uint32_t MAX_MPI_MSG_SIZE = 2097152;/' \
+        src/mpi/model/granted-time-window-mpi-interface.h && \
+    sed -i 's/^const uint32_t NULL_MESSAGE_MAX_MPI_MSG_SIZE = 2000;/const uint32_t NULL_MESSAGE_MAX_MPI_MSG_SIZE = 2097152;/' \
+        src/mpi/model/null-message-mpi-interface.cc && \
+    grep -q 'MAX_MPI_MSG_SIZE = 2097152' src/mpi/model/granted-time-window-mpi-interface.h
+
 RUN ./ns3 configure --build-profile=optimized --enable-modules=core,network,internet,point-to-point --enable-mpi -- -DGHOSTDAGSIM_METRICS=ON && \
     ./ns3 build
 

@@ -35,22 +35,70 @@
 #include "ns3/address.h"
 #include "ns3/boolean.h"
 #include "ns3/double.h"
+#include "ns3/mpi-interface.h"
 #include "ns3/nstime.h"
 #include "ns3/simulator.h"
 #include "ns3/tcp-socket-factory.h"
 #include "ns3/udp-socket.h"
 #include "ns3/uinteger.h"
 
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <string>
-
-#define MSG_DELIMITER '#'
 
 namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE("GhostDagNode");
 
 NS_OBJECT_ENSURE_REGISTERED(GhostDagNode);
+NS_OBJECT_ENSURE_REGISTERED(GhostDagPayloadTag);
+
+/*
+ * Framing
+ *
+ * Every message is one frame of exactly its modelled wire size: an 8-byte
+ * prefix (magic, frame length) followed by zero padding. The JSON payload is
+ * attached as a byte tag on the frame's last byte, so the link carries the
+ * modelled number of bytes regardless of how the payload is encoded.
+ * */
+
+static constexpr uint32_t FRAME_MAGIC = 0x47444147; // "GDAG"
+static constexpr uint32_t FRAME_PREFIX_SIZE = 8;
+static constexpr double LN2_SQUARED = 0.4804530139182014;
+// Must stay below the MPI receive buffer, which ns-3 hard-codes and which the
+// Dockerfile raises to 2 MB (MAX_MPI_MSG_SIZE), minus room for packet headers.
+static constexpr size_t MPI_PAYLOAD_LIMIT = 2097152 - 65536;
+
+TypeId GhostDagPayloadTag::GetTypeId() {
+  static TypeId tid = TypeId("ns3::GhostDagPayloadTag")
+                          .SetParent<Tag>()
+                          .SetGroupName("Applications")
+                          .AddConstructor<GhostDagPayloadTag>();
+  return tid;
+}
+
+TypeId GhostDagPayloadTag::GetInstanceTypeId() const { return GetTypeId(); }
+
+uint32_t GhostDagPayloadTag::GetSerializedSize() const {
+  return 4 + static_cast<uint32_t>(payload.size());
+}
+
+void GhostDagPayloadTag::Serialize(TagBuffer i) const {
+  i.WriteU32(static_cast<uint32_t>(payload.size()));
+  i.Write(reinterpret_cast<const uint8_t *>(payload.data()),
+          static_cast<uint32_t>(payload.size()));
+}
+
+void GhostDagPayloadTag::Deserialize(TagBuffer i) {
+  uint32_t len = i.ReadU32();
+  payload.resize(len);
+  i.Read(reinterpret_cast<uint8_t *>(payload.data()), len);
+}
+
+void GhostDagPayloadTag::Print(std::ostream &os) const {
+  os << "payload=" << payload.size() << "B";
+}
 
 TypeId GhostDagNode::GetTypeId() {
   static TypeId tid =
@@ -62,7 +110,7 @@ TypeId GhostDagNode::GetTypeId() {
                         "The K value for dreedy algorithm ghostdag",
                         UintegerValue(10),
                         MakeUintegerAccessor(&GhostDagNode::m_ghostdag_k),
-                        MakeUintegerChecker<uint8_t>())
+                        MakeUintegerChecker<uint32_t>())
           .AddAttribute("Local", "The Address on which to Bind the rx socket.",
                         AddressValue(),
                         MakeAddressAccessor(&GhostDagNode::m_local),
@@ -102,6 +150,11 @@ TypeId GhostDagNode::GetTypeId() {
               DoubleValue(0.1),
               MakeDoubleAccessor(&GhostDagNode::m_txGenInterval),
               MakeDoubleChecker<double>())
+          .AddAttribute("SnapshotInterval",
+                        "Seconds between DAG snapshot events (0 disables)",
+                        DoubleValue(30.0),
+                        MakeDoubleAccessor(&GhostDagNode::m_snapshotInterval),
+                        MakeDoubleChecker<double>(0.0))
           .AddAttribute(
               "GrapheneEnabled",
               "Use Graphene compact block relay instead of full block relay",
@@ -131,6 +184,8 @@ GhostDagNode::GhostDagNode()
   m_message_header_size = 90;
   m_inventory_size = 36;
   m_headers_size = 81;
+  m_parent_hash_size = 32;
+  m_transaction_size = 522;
 
   m_graphene_recovery_timeout = Seconds(10);
 
@@ -246,6 +301,7 @@ void GhostDagNode::StopApplication() {
     m_socket_to_peer.erase(sock);
   }
   m_pending_messages.clear();
+  m_tx_queue.clear();
 
   if (m_socket) {
     m_socket->Close();
@@ -265,24 +321,63 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
   Ptr<Packet> packet;
 
   while ((packet = socket->RecvFrom(from))) {
-    if (packet->GetSize() == 0) {
+    uint32_t size = packet->GetSize();
+    if (size == 0) {
       break;
     }
 
-    std::vector<uint8_t> buf(packet->GetSize());
-    packet->CopyData(buf.data(), packet->GetSize());
-    std::string new_data(buf.begin(), buf.end());
+    // Payload tags in this chunk, keyed by the offset just past their byte.
+    std::map<uint32_t, std::string> payloads;
+    GhostDagPayloadTag tag;
+    ByteTagIterator tags = packet->GetByteTagIterator();
+    while (tags.HasNext()) {
+      ByteTagIterator::Item item = tags.Next();
+      if (item.GetTypeId() == GhostDagPayloadTag::GetTypeId()) {
+        item.GetTag(tag);
+        payloads[item.GetEnd()] = tag.payload;
+      }
+    }
 
-    m_buffered_data[from] += new_data;
+    RxFrameState &st = m_rx_state[socket];
+    uint32_t pos = 0;
+    while (pos < size) {
+      if (st.prefix_have < FRAME_PREFIX_SIZE) {
+        uint32_t take = std::min(FRAME_PREFIX_SIZE - st.prefix_have, size - pos);
+        packet->CreateFragment(pos, take)->CopyData(st.prefix + st.prefix_have,
+                                                    take);
+        st.prefix_have += take;
+        pos += take;
+        if (st.prefix_have == FRAME_PREFIX_SIZE) {
+          uint32_t magic, len;
+          std::memcpy(&magic, st.prefix, 4);
+          std::memcpy(&len, st.prefix + 4, 4);
+          NS_ABORT_MSG_IF(magic != FRAME_MAGIC || len <= FRAME_PREFIX_SIZE,
+                          "Node " << GetNode()->GetId()
+                                  << ": corrupt frame prefix");
+          st.frame_len = len;
+          st.body_remaining = len - FRAME_PREFIX_SIZE;
+        }
+        continue;
+      }
 
-    size_t pos = 0;
-    while ((pos = m_buffered_data[from].find(MSG_DELIMITER)) !=
-           std::string::npos) {
-      std::string parsed_packet = m_buffered_data[from].substr(0, pos);
+      uint32_t take = std::min(st.body_remaining, size - pos);
+      pos += take;
+      st.body_remaining -= take;
+      if (st.body_remaining > 0) {
+        continue;
+      }
 
-      m_buffered_data[from].erase(0, pos + 1);
+      uint32_t wire_bytes = st.frame_len;
+      st = RxFrameState{};
 
-      auto data = nlohmann::json::parse(parsed_packet, nullptr, false);
+      auto pit = payloads.find(pos);
+      if (pit == payloads.end()) {
+        NS_LOG_ERROR("Node " << GetNode()->GetId()
+                             << " received a frame without payload");
+        continue;
+      }
+
+      auto data = nlohmann::json::parse(pit->second, nullptr, false);
       if (data.is_discarded()) {
         continue;
       }
@@ -291,21 +386,19 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
       if (msg_data != (uint64_t)NO_MESSAGE) {
         NS_LOG_INFO("At time " << Simulator::Now().GetSeconds()
                                << "s ghostdag node " << GetNode()->GetId()
-                               << " received " << packet->GetSize()
-                               << " bytes from "
+                               << " received " << wire_bytes << " bytes from "
                                << InetSocketAddress::ConvertFrom(from).GetIpv4()
-                               << " port "
-                               << InetSocketAddress::ConvertFrom(from).GetPort()
                                << " with info = " << data.dump(4));
 
-        ProcessMessage((enum Messages)msg_data, parsed_packet, from);
+        ProcessMessage((enum Messages)msg_data, pit->second, from, wire_bytes);
       }
     }
   }
 }
 
 void GhostDagNode::SendMessage(enum Messages recv, enum Messages type,
-                               std::string payload, Address &to) {
+                               std::string payload, Address &to,
+                               uint32_t wire_bytes) {
   nlohmann::json d = nlohmann::json::parse(payload);
   d["msg"] = type;
   std::string serialized = d.dump();
@@ -315,27 +408,140 @@ void GhostDagNode::SendMessage(enum Messages recv, enum Messages type,
 
   auto pending_it = m_pending_messages.find(ip);
   if (pending_it != m_pending_messages.end()) {
-    pending_it->second.push_back(serialized);
+    pending_it->second.emplace_back(serialized, wire_bytes);
     return;
   }
 
   auto it = m_peers_sockets.find(ip);
   if (it == m_peers_sockets.end()) {
-    m_pending_messages[ip].push_back(serialized);
+    m_pending_messages[ip].emplace_back(serialized, wire_bytes);
     CreatePeerSocket(ip);
     return;
   }
 
-  Ptr<Packet> packet =
-      Create<Packet>((uint8_t *)serialized.c_str(), serialized.size());
-  const uint8_t delim[] = {MSG_DELIMITER};
-  if (it->second->Send(packet) > 0) {
-    it->second->Send(delim, 1, 0);
+  EnqueueFrame(it->second, serialized, wire_bytes);
+}
+
+void GhostDagNode::EnqueueFrame(Ptr<Socket> socket,
+                                const std::string &serialized,
+                                uint32_t wire_bytes) {
+  wire_bytes = std::max(wire_bytes, FRAME_PREFIX_SIZE + 1);
+
+  uint8_t prefix[FRAME_PREFIX_SIZE];
+  std::memcpy(prefix, &FRAME_MAGIC, 4);
+  std::memcpy(prefix + 4, &wire_bytes, 4);
+
+  Ptr<Packet> frame = Create<Packet>(prefix, FRAME_PREFIX_SIZE);
+  frame->AddAtEnd(Create<Packet>(wire_bytes - FRAME_PREFIX_SIZE));
+
+  NS_ABORT_MSG_IF(MpiInterface::GetSize() > 1 &&
+                      serialized.size() > MPI_PAYLOAD_LIMIT,
+                  "Message payload of " << serialized.size()
+                                        << " bytes exceeds the MPI buffer; "
+                                           "patch MAX_MPI_MSG_SIZE in ns-3");
+
+  GhostDagPayloadTag tag;
+  tag.payload = serialized;
+  frame->AddByteTag(tag, wire_bytes - 1, wire_bytes);
+
+  m_tx_queue[socket].push_back(frame);
+  HandleSendReady(socket, socket->GetTxAvailable());
+}
+
+// Writes queued frames into the TCP send buffer as space frees up; a frame
+// larger than the free space is split and its remainder stays queued.
+void GhostDagNode::HandleSendReady(Ptr<Socket> socket, uint32_t) {
+  auto qit = m_tx_queue.find(socket);
+  if (qit == m_tx_queue.end()) {
+    return;
+  }
+  auto &queue = qit->second;
+
+  while (!queue.empty()) {
+    uint32_t available = socket->GetTxAvailable();
+    if (available == 0) {
+      return;
+    }
+
+    Ptr<Packet> head = queue.front();
+    uint32_t size = head->GetSize();
+    if (size <= available) {
+      if (socket->Send(head) < 0) {
+        return;
+      }
+      queue.pop_front();
+    } else {
+      if (socket->Send(head->CreateFragment(0, available)) < 0) {
+        return;
+      }
+      queue.front() = head->CreateFragment(available, size - available);
+    }
   }
 }
 
+/*
+ * Message-size model
+ *
+ * Bitcoin message layout: 90-byte message header, 36-byte inventory entry,
+ * 81-byte block header plus 32 bytes per parent reference, 522-byte
+ * transaction. Graphene structures are sized by Graphene's size formula: a
+ * Bloom filter of -n ln(f) / (8 ln^2 2) bytes and an IBLT of IBLT_CELL_SIZE
+ * bytes per cell.
+ * */
+
+static uint32_t BloomWireSize(size_t n_items, double fpr) {
+  if (n_items == 0 || fpr <= 0.0 || fpr >= 1.0) {
+    return 0;
+  }
+  return static_cast<uint32_t>(
+      std::ceil(-static_cast<double>(n_items) * std::log(fpr) /
+                (8.0 * LN2_SQUARED)));
+}
+
+static uint32_t IbltWireSize(const IBLT &iblt) {
+  return static_cast<uint32_t>(GrapheneProtocol::IBLT_VALUE_SIZE *
+                               iblt.hashTableSize());
+}
+
+uint32_t GhostDagNode::WireSizeInv() const {
+  return m_message_header_size + m_inventory_size;
+}
+
+uint32_t GhostDagNode::WireSizeBlock(const Block &block) const {
+  return m_message_header_size + m_headers_size +
+         m_parent_hash_size * block.header.parent_hashes.size() +
+         m_transaction_size * block.transactions.size();
+}
+
+uint32_t GhostDagNode::WireSizeGrapheneBlock(size_t n_parents, size_t n_txs,
+                                             double fpr,
+                                             const IBLT &iblt) const {
+  return m_message_header_size + m_headers_size +
+         m_parent_hash_size * n_parents + BloomWireSize(n_txs, fpr) +
+         IbltWireSize(iblt);
+}
+
+uint32_t GhostDagNode::WireSizeRecoveryRequest(size_t z, double fpr_r) const {
+  return m_message_header_size + BloomWireSize(z, fpr_r);
+}
+
+uint32_t GhostDagNode::WireSizeRecoveryResponse(const IBLT &iblt,
+                                                size_t n_missing) const {
+  return m_message_header_size + IbltWireSize(iblt) +
+         m_transaction_size * n_missing;
+}
+
+uint32_t GhostDagNode::WireSizeTxInv(size_t n_txs) const {
+  return m_message_header_size + m_inventory_size * n_txs;
+}
+
+uint32_t GhostDagNode::WireSizeTxs(size_t n_txs) const {
+  return m_message_header_size + m_transaction_size * n_txs;
+}
+
 void GhostDagNode::ProcessMessage(enum Messages msg_type,
-                                  const std::string &payload, Address &from) {
+                                  const std::string &payload, Address &from,
+                                  uint32_t wire_bytes) {
   auto data = nlohmann::json::parse(payload, nullptr, false);
   if (data.is_discarded()) {
     NS_LOG_ERROR("Node " << GetNode()->GetId()
@@ -388,7 +594,7 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type,
       }
 
       EVENT_MSG_RECV(NID, IPV4_STR(from), "block", newBlock.header.block_id,
-                     payload.size());
+                     wire_bytes);
 
       HandleBlock(newBlock, from);
     }
@@ -398,7 +604,7 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type,
     NS_LOG_INFO("Node " << GetNode()->GetId() << " received GRAPHENE_BLOCK");
     uint64_t block_id = data.value("block_id", uint64_t{0});
     EVENT_MSG_RECV(NID, IPV4_STR(from), "graphene_block", block_id,
-                   payload.size());
+                   wire_bytes);
     HandleGrapheneBlock(data, from);
     break;
   }
@@ -415,7 +621,7 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type,
     std::string block_hash = data["block_hash"];
     uint64_t block_id = std::stoull(block_hash);
     EVENT_MSG_RECV(NID, IPV4_STR(from), "graphene_recovery_response", block_id,
-                   payload.size());
+                   wire_bytes);
 
     HandleGrapheneRecoveryResponse(data, from);
     break;
@@ -478,12 +684,15 @@ void GhostDagNode::HandleInvRelayBlock(const std::string &block_hash,
   m_queue_inv[block_hash].push_back(from);
 
   if (first_announcement) {
+    EVENT_MSG_RECV(NID, IPV4_STR(from), "inv_block", block_id, WireSizeInv());
+
     nlohmann::json req;
     req["block_hash"] = block_hash;
     if (m_graphene_enabled) {
       req["mempool_count"] = static_cast<uint64_t>(m_mempool.size());
     }
-    SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, req.dump(), from);
+    SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, req.dump(), from, WireSizeInv());
+    EVENT_MSG_SENT(NID, IPV4_STR(from), "getdata", block_id, WireSizeInv());
 
     m_inv_timeouts[block_hash] =
         Simulator::Schedule(m_inv_timeout_minutes,
@@ -517,8 +726,9 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
     bloom_filter bf{bloom_parameters()};
     IBLT iblt(1, GrapheneProtocol::IBLT_VALUE_SIZE, 1.0f, 2);
     uint64_t mc = receiver_mempool_count;
+    double fpr = 0.0;
     if (GrapheneProtocol::BuildSenderComponents(block.transactions, mc, bf,
-                                                iblt)) {
+                                                iblt, fpr)) {
       uint64_t tx_checksum = 0;
       for (const auto &tx : block.transactions) {
         tx_checksum ^= tx.tx_id;
@@ -539,7 +749,9 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
       gm["tx_checksum"] = tx_checksum;
       gm["fpr"] = bf.effective_fpp();
 
-      SendMessage(NO_MESSAGE, GRAPHENE_BLOCK, gm.dump(), from);
+      SendMessage(NO_MESSAGE, GRAPHENE_BLOCK, gm.dump(), from,
+                  WireSizeGrapheneBlock(block.header.parent_hashes.size(),
+                                        block.transactions.size(), fpr, iblt));
       return;
     }
     // Receiver mempool too small for Graphene to pay off: fall through to the
@@ -565,7 +777,7 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
     blockMsg["block"]["transactions"].push_back(txJson);
   }
 
-  SendMessage(NO_MESSAGE, BLOCK, blockMsg.dump(), from);
+  SendMessage(NO_MESSAGE, BLOCK, blockMsg.dump(), from, WireSizeBlock(block));
 }
 
 void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
@@ -593,7 +805,7 @@ void GhostDagNode::HandleBlock(const Block &new_block, Address &from) {
   }
 
   EVENT_BLOCK_RECEIVED(NID, new_block.header.block_id, IPV4_STR(from),
-                       new_block.GetTotalSize(), new_block.transactions.size(),
+                       WireSizeBlock(new_block), new_block.transactions.size(),
                        already_known_txs, new_block.header.parent_hashes.size(),
                        new_block.header.time_created);
 
@@ -706,8 +918,12 @@ void GhostDagNode::HandleGrapheneBlock(const nlohmann::json &data,
   m_graphene_timeouts[block_hash] = Simulator::Schedule(
       m_graphene_recovery_timeout, &GhostDagNode::GrapheneRecoveryTimeout, this,
       block_hash);
+  uint32_t request_bytes =
+      WireSizeRecoveryRequest(result.recovery_z, result.recovery_fpr);
   SendMessage(GRAPHENE_RECOVERY_REQUEST, GRAPHENE_RECOVERY_REQUEST,
-              result.recovery_request.dump(), from);
+              result.recovery_request.dump(), from, request_bytes);
+  EVENT_MSG_SENT(NID, IPV4_STR(from), "graphene_recovery_request", block_id,
+                 request_bytes);
 }
 
 void GhostDagNode::HandleGrapheneRecoveryRequest(const nlohmann::json &data,
@@ -756,7 +972,8 @@ void GhostDagNode::HandleGrapheneRecoveryRequest(const nlohmann::json &data,
   resp["missing"] = missing;
 
   SendMessage(GRAPHENE_RECOVERY_RESPONSE, GRAPHENE_RECOVERY_RESPONSE,
-              resp.dump(), from);
+              resp.dump(), from,
+              WireSizeRecoveryResponse(sender_second_iblt, missing.size()));
 }
 
 void GhostDagNode::HandleGrapheneRecoveryResponse(const nlohmann::json &data,
@@ -803,7 +1020,8 @@ void GhostDagNode::HandleGrapheneRecoveryResponse(const nlohmann::json &data,
     return;
   }
 
-  EVENT_BLOCK_GRAPHENE_FALLBACK(NID, state.header.block_id, IPV4_STR(from));
+  EVENT_BLOCK_GRAPHENE_FALLBACK(NID, state.header.block_id, IPV4_STR(from),
+                                "p2_failed");
 
   m_graphene_state.erase(it);
   auto te = m_graphene_timeouts.find(block_hash);
@@ -816,7 +1034,9 @@ void GhostDagNode::HandleGrapheneRecoveryResponse(const nlohmann::json &data,
   nlohmann::json msg;
   msg["block_hash"] = block_hash;
   msg["graphene_failed"] = true;
-  SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, msg.dump(), from);
+  SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, msg.dump(), from, WireSizeInv());
+  EVENT_MSG_SENT(NID, IPV4_STR(from), "getdata", std::stoull(block_hash),
+                 WireSizeInv());
 }
 
 void GhostDagNode::GrapheneRecoveryTimeout(std::string block_hash) {
@@ -836,12 +1056,15 @@ void GhostDagNode::GrapheneRecoveryTimeout(std::string block_hash) {
   auto sit = m_graphene_senders.find(block_hash);
   if (sit != m_graphene_senders.end()) {
     EVENT_BLOCK_GRAPHENE_FALLBACK(NID, it->second.header.block_id,
-                                  IPV4_STR(sit->second));
+                                  IPV4_STR(sit->second), "timeout");
 
     nlohmann::json msg;
     msg["block_hash"] = block_hash;
     msg["graphene_failed"] = true;
-    SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, msg.dump(), sit->second);
+    SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, msg.dump(), sit->second,
+                WireSizeInv());
+    EVENT_MSG_SENT(NID, IPV4_STR(sit->second), "getdata", block_id,
+                   WireSizeInv());
     m_graphene_senders.erase(sit);
   }
 
@@ -872,7 +1095,9 @@ void GhostDagNode::InvTimeoutExpired(std::string block_hash) {
     if (m_graphene_enabled) {
       req["mempool_count"] = static_cast<uint64_t>(m_mempool.size());
     }
-    SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, req.dump(), next);
+    SendMessage(NO_MESSAGE, REQ_RELAY_BLOCK, req.dump(), next, WireSizeInv());
+    EVENT_MSG_SENT(NID, IPV4_STR(next), "getdata", std::stoull(block_hash),
+                   WireSizeInv());
 
     m_inv_timeouts[block_hash] =
         Simulator::Schedule(m_inv_timeout_minutes,
@@ -900,7 +1125,7 @@ void GhostDagNode::BroadcastInvBlock(const std::string &block_hash,
       continue;
     InetSocketAddress peer = InetSocketAddress(peer_addr, m_ghostdag_port);
     auto addr = Address(peer);
-    SendMessage(NO_MESSAGE, INV_RELAY_BLOCK, inv.dump(), addr);
+    SendMessage(NO_MESSAGE, INV_RELAY_BLOCK, inv.dump(), addr, WireSizeInv());
   }
 }
 
@@ -940,7 +1165,8 @@ void GhostDagNode::HandleInvTransactions(
 
   nlohmann::json req;
   req["tx_hashes"] = wanted;
-  SendMessage(NO_MESSAGE, REQ_TRANSACTIONS, req.dump(), from);
+  SendMessage(NO_MESSAGE, REQ_TRANSACTIONS, req.dump(), from,
+              WireSizeTxInv(wanted.size()));
 
   NS_LOG_DEBUG("Node " << GetNode()->GetId() << " requested " << wanted.size()
                        << " txs in one REQ");
@@ -978,7 +1204,8 @@ void GhostDagNode::HandleReqTransactions(
     return;
   }
 
-  SendMessage(NO_MESSAGE, TRANSACTIONS, msg.dump(), from);
+  SendMessage(NO_MESSAGE, TRANSACTIONS, msg.dump(), from,
+              WireSizeTxs(found_count));
 
   NS_LOG_DEBUG("Node " << GetNode()->GetId() << " replied with " << found_count
                        << "/" << tx_hashes.size()
@@ -1067,7 +1294,8 @@ void GhostDagNode::InvTxTimeoutExpired(std::string tx_hash) {
 
     nlohmann::json req;
     req["tx_hashes"] = std::vector<std::string>{tx_hash};
-    SendMessage(NO_MESSAGE, REQ_TRANSACTIONS, req.dump(), next);
+    SendMessage(NO_MESSAGE, REQ_TRANSACTIONS, req.dump(), next,
+                WireSizeTxInv(1));
 
     m_inv_tx_timeouts[tx_hash] =
         Simulator::Schedule(m_inv_timeout_minutes,
@@ -1100,7 +1328,8 @@ void GhostDagNode::BroadcastInvTransactions(
     }
     InetSocketAddress peer(peer_addr, m_ghostdag_port);
     Address addr(peer);
-    SendMessage(NO_MESSAGE, INV_TRANSACTIONS, payload, addr);
+    SendMessage(NO_MESSAGE, INV_TRANSACTIONS, payload, addr,
+                WireSizeTxInv(tx_hashes.size()));
   }
 }
 
@@ -1194,11 +1423,13 @@ Ptr<Socket> GhostDagNode::CreatePeerSocket(Ipv4Address peer_addr) {
   m_socket_to_peer[sock] = peer_addr;
   m_peers_sockets[peer_addr] = sock;
 
-  m_pending_messages.emplace(peer_addr, std::vector<std::string>{});
+  m_pending_messages.emplace(peer_addr,
+                             std::vector<std::pair<std::string, uint32_t>>{});
 
   sock->SetConnectCallback(
       MakeCallback(&GhostDagNode::HandleConnectionSucceeded, this),
       MakeCallback(&GhostDagNode::HandleConnectionFailed, this));
+  sock->SetSendCallback(MakeCallback(&GhostDagNode::HandleSendReady, this));
   sock->Connect(InetSocketAddress(peer_addr, m_ghostdag_port));
   return sock;
 }
@@ -1212,13 +1443,8 @@ void GhostDagNode::HandleConnectionSucceeded(Ptr<Socket> socket) {
 
   auto pending_it = m_pending_messages.find(peer_addr);
   if (pending_it != m_pending_messages.end()) {
-    InetSocketAddress peer_sa(peer_addr, m_ghostdag_port);
-    const uint8_t delim[] = {MSG_DELIMITER};
-    for (const auto &msg : pending_it->second) {
-      Ptr<Packet> packet = Create<Packet>((uint8_t *)msg.c_str(), msg.size());
-      if (socket->Send(packet) > 0) {
-        socket->Send(delim, 1, 0);
-      }
+    for (const auto &[serialized, wire_bytes] : pending_it->second) {
+      EnqueueFrame(socket, serialized, wire_bytes);
     }
     m_pending_messages.erase(pending_it);
   }
@@ -1239,6 +1465,8 @@ void GhostDagNode::HandleConnectionFailed(Ptr<Socket> socket) {
 }
 
 void GhostDagNode::ScheduleSnapshot() {
+  if (m_snapshotInterval <= 0.0)
+    return;
   m_snapshotEvent = Simulator::Schedule(Seconds(m_snapshotInterval),
                                         &GhostDagNode::EmitDagSnapshot, this);
 }

@@ -212,7 +212,7 @@ std::vector<uint8_t> GrapheneProtocol::U64ToVec(uint64_t v) {
 
 bool GrapheneProtocol::BuildSenderComponents(
     const std::set<Transaction> &block_txs, size_t receiver_mempool_count,
-    bloom_filter &out_bf, IBLT &out_iblt) {
+    bloom_filter &out_bf, IBLT &out_iblt, double &out_fpr) {
 
   size_t n = block_txs.size();
   size_t m = receiver_mempool_count;
@@ -245,6 +245,8 @@ bool GrapheneProtocol::BuildSenderComponents(
               ? FILTER_FPR_MAX
               : optSymDiff / double(nReceiverPoolItems);
   }
+
+  out_fpr = fpr;
 
   bloom_parameters params;
   params.projected_element_count = std::max((int)n, (int)10);
@@ -326,7 +328,7 @@ size_t GrapheneProtocol::BuildRecoveryBloom(const std::vector<uint64_t> &Z,
                                             const size_t m, const size_t n,
                                             double sender_fpr,
                                             bloom_filter &out_bf, int &out_b,
-                                            int &out_y_star) {
+                                            int &out_y_star, double &out_fpr) {
   size_t z = Z.size();
   double bound = 1.0 / 240.0;
 
@@ -372,6 +374,8 @@ size_t GrapheneProtocol::BuildRecoveryBloom(const std::vector<uint64_t> &Z,
       best_fpr = fpr_r;
     }
   }
+
+  out_fpr = best_fpr;
 
   bloom_parameters p;
   p.projected_element_count = std::max(static_cast<int>(z), 10);
@@ -662,7 +666,11 @@ IncomingBlockResult GrapheneProtocol::ProcessIncomingBlock(
                           rstate.candidate_ids.end());
   bloom_filter rbf;
   int b, y_star;
-  BuildRecoveryBloom(Z, mempool_size, tx_count, data["fpr"], rbf, b, y_star);
+  double fpr_r;
+  BuildRecoveryBloom(Z, mempool_size, tx_count, data["fpr"], rbf, b, y_star,
+                     fpr_r);
+  result.recovery_z = Z.size();
+  result.recovery_fpr = fpr_r;
 
   nlohmann::json req;
   req["block_hash"] = data["block_hash"];
