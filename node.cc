@@ -158,6 +158,12 @@ TypeId GhostDagNode::GetTypeId() {
                         UintegerValue(10),
                         MakeUintegerAccessor(&GhostDagNode::m_ghostdag_k),
                         MakeUintegerChecker<uint32_t>())
+          .AddAttribute("Seed",
+                        "Replication seed mixed into the node's generator "
+                        "(0 = seeded by node id only, the original behaviour)",
+                        UintegerValue(0),
+                        MakeUintegerAccessor(&GhostDagNode::m_seed),
+                        MakeUintegerChecker<uint32_t>())
           .AddAttribute("Local", "The Address on which to Bind the rx socket.",
                         AddressValue(),
                         MakeAddressAccessor(&GhostDagNode::m_local),
@@ -227,6 +233,7 @@ GhostDagNode::GhostDagNode()
 
   m_ghostdag_port = 16433;
   m_ghostdag_k = 10;
+  m_seed = 0;
   m_seconds_per_min = 60;
   m_message_header_size = 90;
   m_inventory_size = 36;
@@ -293,7 +300,10 @@ void GhostDagNode::StartApplication() {
   m_txFeeDistribution =
       std::exponential_distribution<double>(1.0 / m_txFeeLambda);
 
-  m_generator.seed(static_cast<uint32_t>(GetNode()->GetId()) * 2654435761u);
+  // Deterministic per node; --seed shifts every node's stream (seed 0 keeps
+  // the original expression).
+  m_generator.seed(static_cast<uint32_t>(GetNode()->GetId()) * 2654435761u +
+                   m_seed * 0x9E3779B9u);
 
   NS_LOG_INFO("Node " << GetNode()->GetId()
                       << ": download speed = " << m_download_speed << " B/s");
@@ -419,7 +429,8 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
     uint32_t pos = 0;
     while (pos < size) {
       if (st.prefix_have < FRAME_PREFIX_SIZE) {
-        uint32_t take = std::min(FRAME_PREFIX_SIZE - st.prefix_have, size - pos);
+        uint32_t take =
+            std::min(FRAME_PREFIX_SIZE - st.prefix_have, size - pos);
         packet->CreateFragment(pos, take)->CopyData(st.prefix + st.prefix_have,
                                                     take);
         st.prefix_have += take;
@@ -430,16 +441,15 @@ void GhostDagNode::HandleRead(Ptr<Socket> socket) {
           std::memcpy(&len, st.prefix + 4, 4);
           std::memcpy(&payload_len, st.prefix + 8, 4);
           std::memcpy(&seq, st.prefix + 12, 4);
-          NS_ABORT_MSG_IF(magic != FRAME_MAGIC || len <= FRAME_PREFIX_SIZE ||
-                              payload_len > len - FRAME_PREFIX_SIZE ||
-                              seq != st.next_seq,
-                          "Node " << GetNode()->GetId()
-                                  << ": corrupt frame stream from "
-                                  << InetSocketAddress::ConvertFrom(from).GetIpv4()
-                                  << " (magic=0x" << std::hex << magic << std::dec
-                                  << " len=" << len << " payload_len="
-                                  << payload_len << " seq=" << seq
-                                  << " expected seq=" << st.next_seq << ")");
+          NS_ABORT_MSG_IF(
+              magic != FRAME_MAGIC || len <= FRAME_PREFIX_SIZE ||
+                  payload_len > len - FRAME_PREFIX_SIZE || seq != st.next_seq,
+              "Node " << GetNode()->GetId() << ": corrupt frame stream from "
+                      << InetSocketAddress::ConvertFrom(from).GetIpv4()
+                      << " (magic=0x" << std::hex << magic << std::dec
+                      << " len=" << len << " payload_len=" << payload_len
+                      << " seq=" << seq << " expected seq=" << st.next_seq
+                      << ")");
           st.next_seq = seq + 1;
           st.frame_len = len;
           st.payload_len = payload_len;
@@ -632,9 +642,8 @@ static uint32_t BloomWireSize(size_t n_items, double fpr) {
   if (n_items == 0 || fpr <= 0.0 || fpr >= 1.0) {
     return 0;
   }
-  return static_cast<uint32_t>(
-      std::ceil(-static_cast<double>(n_items) * std::log(fpr) /
-                (8.0 * LN2_SQUARED)));
+  return static_cast<uint32_t>(std::ceil(-static_cast<double>(n_items) *
+                                         std::log(fpr) / (8.0 * LN2_SQUARED)));
 }
 
 static uint32_t IbltWireSize(const IBLT &iblt) {
@@ -738,8 +747,7 @@ void GhostDagNode::ProcessMessage(enum Messages msg_type,
   case GRAPHENE_BLOCK: {
     NS_LOG_INFO("Node " << GetNode()->GetId() << " received GRAPHENE_BLOCK");
     uint64_t block_id = data.value("block_id", uint64_t{0});
-    EVENT_MSG_RECV(NID, IPV4_STR(from), "graphene_block", block_id,
-                   wire_bytes);
+    EVENT_MSG_RECV(NID, IPV4_STR(from), "graphene_block", block_id, wire_bytes);
     HandleGrapheneBlock(data, from);
     break;
   }
@@ -901,9 +909,8 @@ void GhostDagNode::HandleReqRelayBlock(const std::string &block_hash,
 
   auto &txArray = blockMsg["block"]["transactions"] = nlohmann::json::array();
   for (const auto &tx : block.transactions()) {
-    txArray.push_back({{"tx_id", tx.tx_id},
-                       {"size_bytes", tx.size_bytes},
-                       {"fee", tx.fee}});
+    txArray.push_back(
+        {{"tx_id", tx.tx_id}, {"size_bytes", tx.size_bytes}, {"fee", tx.fee}});
   }
 
   SendMessage(BLOCK, std::move(blockMsg), from, WireSizeBlock(block));
@@ -1452,8 +1459,8 @@ void GhostDagNode::ProcessTxTimeouts() {
   ArmTxTimeoutTimer();
 }
 
-void GhostDagNode::BroadcastInvTransactions(
-    const std::vector<uint64_t> &tx_ids, Ipv4Address exclude) {
+void GhostDagNode::BroadcastInvTransactions(const std::vector<uint64_t> &tx_ids,
+                                            Ipv4Address exclude) {
 
   if (tx_ids.empty()) {
     return;

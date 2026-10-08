@@ -101,6 +101,7 @@ int main(int argc, char *argv[]) {
   uint32_t tcpSegmentSize = 536;
 
   int targetBlocksPerMiner = 1000;
+  double drainSeconds = 0.0;
 
   enum Region defaultMinersRegions[] = {
       NORTH_AMERICA, EUROPE,        ASIA_PACIFIC, NORTH_AMERICA, EUROPE,
@@ -120,6 +121,7 @@ int main(int argc, char *argv[]) {
   bool deriveK = false;
   double delta = 0.01;
   double dmax = 0.0;
+  uint32_t seed = 0;
 
   enum Region *minersRegions;
   int *minersStrategies;
@@ -137,12 +139,10 @@ int main(int argc, char *argv[]) {
   cmd.AddValue("lambda", "Mean block interval per miner (seconds)", lambda);
   cmd.AddValue("derive_k", "Derive k from lambda and measured topology delay",
                deriveK);
-  cmd.AddValue("delta", "GHOSTDAG target error rate used by --derive_k",
-               delta);
+  cmd.AddValue("delta", "GHOSTDAG target error rate used by --derive_k", delta);
   cmd.AddValue("dmax",
                "Propagation bound D_max in seconds for --derive_k: the 95th "
-               "percentile of block propagation delay measured in a pilot run "
-               "(Rcode/08_dmax_calibration.R)",
+               "percentile of block propagation delay measured",
                dmax);
   cmd.AddValue("tau", "Propagation delay multiplier", tau);
   cmd.AddValue("pareto_divider",
@@ -167,6 +167,11 @@ int main(int argc, char *argv[]) {
   cmd.AddValue("blocks_per_miner",
                "Target number of blocks each miner should produce",
                targetBlocksPerMiner);
+  cmd.AddValue("drain_seconds",
+               "Seconds the network keeps relaying after mining stops, so "
+               "blocks still in flight finish propagating (0 stops everything "
+               "together with the miners, as before)",
+               drainSeconds);
   cmd.AddValue("run_name", "Name tag for this simulation run",
                metrics_scenario);
   cmd.AddValue("graphene", "Use graphene relay handler", graphene);
@@ -178,7 +183,23 @@ int main(int argc, char *argv[]) {
                "(ns-3 default 536; 1448 matches Ethernet links and cuts the "
                "number of simulated segments per block by ~2.7x)",
                tcpSegmentSize);
+  cmd.AddValue("seed",
+               "Seed of a replication of the same configuration (Section "
+               "IV-F): 0 keeps the original seeding (topology srand(1000), "
+               "ns-3 run number 1, node generators seeded by node id); a "
+               "value s > 0 shifts all three, so identical flags with a "
+               "different seed give a different topology draw, link latencies, "
+               "transaction stream and mining schedule",
+               seed);
   cmd.Parse(argc, argv);
+
+  // ns-3's own random streams (the Pareto link latencies) take the run
+  // number; seed 0 leaves the default (seed 1, run 1) untouched, so every
+  // run made before this flag existed is reproduced bit for bit.
+  if (seed > 0) {
+    RngSeedManager::SetSeed(1);
+    RngSeedManager::SetRun(seed);
+  }
 
   Config::SetDefault("ns3::TcpSocket::SegmentSize",
                      UintegerValue(tcpSegmentSize));
@@ -186,6 +207,12 @@ int main(int argc, char *argv[]) {
   if (noMiners > totalNoNodes) {
     std::cerr << "Error: number of miners (" << noMiners
               << ") cannot exceed total nodes (" << totalNoNodes << ")\n";
+    return 1;
+  }
+
+  if (drainSeconds < 0.0) {
+    std::cerr << "Error: --drain_seconds (" << drainSeconds
+              << ") cannot be negative\n";
     return 1;
   }
 
@@ -213,7 +240,10 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // `stop` is when mining ends; the applications run `drain` minutes longer so
+  // blocks mined near the end can finish propagating.
   stop = (targetBlocksPerMiner * lambda) / 60.0;
+  const double drain = drainSeconds / 60.0;
 
   GlobalValue::Bind("SimulatorImplementationType",
                     StringValue("ns3::DistributedSimulatorImpl"));
@@ -226,7 +256,7 @@ int main(int argc, char *argv[]) {
 
   GhostDagTopologyHelper topologyHelper(
       systemCount, totalNoNodes, noMiners, minersRegions, minConnectionsPerNode,
-      maxConnectionsPerNode, pareto_shape_divider, tau, systemId);
+      maxConnectionsPerNode, pareto_shape_divider, tau, systemId, seed);
 
   // k is fixed at inception from the assumed propagation bound, as in
   // GHOSTDAG. The bound is the empirical D_max of a pilot run, not a property
@@ -267,8 +297,7 @@ int main(int argc, char *argv[]) {
           nodesConnections[minerId], peersDownloadSpeeds[minerId],
           peersUploadSpeeds[minerId], nodesInternetSpeeds[minerId]);
 
-      minerHelper.SetAttribute("Kghostdag",
-                               UintegerValue(ghostdagK));
+      minerHelper.SetAttribute("Kghostdag", UintegerValue(ghostdagK));
       minerHelper.SetAttribute("BlockGenInterval", DoubleValue(lambda));
       minerHelper.SetAttribute("TxsPerBlock", UintegerValue(txsPerBlock));
       minerHelper.SetAttribute("TxSelectionStrategy",
@@ -278,9 +307,16 @@ int main(int argc, char *argv[]) {
 
       minerHelper.SetAttribute("TxGenInterval", DoubleValue(txGenInterval));
       minerHelper.SetAttribute("GrapheneEnabled", BooleanValue(graphene));
-      minerHelper.SetAttribute("SnapshotInterval", DoubleValue(snapshotInterval));
+      minerHelper.SetAttribute("SnapshotInterval",
+                               DoubleValue(snapshotInterval));
       minerHelper.SetAttribute("InvTimeoutMinutes",
                                TimeValue(Seconds(invTimeoutSeconds)));
+      minerHelper.SetAttribute("Seed", UintegerValue(seed));
+      // Left unset without a drain window, so no extra event is scheduled and
+      // earlier runs are reproduced bit for bit.
+      if (drainSeconds > 0.0) {
+        minerHelper.SetAttribute("MiningDuration", TimeValue(Minutes(stop)));
+      }
 
       ghostdagMiners.Add(minerHelper.Install(targetNode));
     }
@@ -305,7 +341,9 @@ int main(int argc, char *argv[]) {
     cfg["tx_fee_lambda"] = txFeeLambda;
     cfg["mempool_size"] = mempoolSize;
     cfg["scenario_name"] = metrics_scenario;
-    cfg["sim_duration_minutes"] = stop;
+    cfg["sim_duration_minutes"] =
+        stop; // mining time; the run lasts drain_seconds longer
+    cfg["drain_seconds"] = drainSeconds;
     cfg["tx_gen_interval"] = txGenInterval;
     cfg["tx_load"] = txLoad;
     cfg["snapshot_interval"] = snapshotInterval;
@@ -316,6 +354,7 @@ int main(int argc, char *argv[]) {
     cfg["min_conn"] = minConnectionsPerNode;
     cfg["max_conn"] = maxConnectionsPerNode;
     cfg["max_delay"] = topologyHelper.m_maxDelay;
+    cfg["seed"] = seed;
     auto *regions = topologyHelper.GetNodesRegions();
     for (int i = 0; i < totalNoNodes; i++)
       cfg["node_regions"][std::to_string(i)] = regions[i];
@@ -331,6 +370,7 @@ int main(int argc, char *argv[]) {
     std::cout << "Total Nodes:                " << totalNoNodes << "\n";
     std::cout << "Miners:                     " << noMiners << "\n";
     std::cout << "GHOSTDAG k:                 " << ghostdagK << "\n";
+    std::cout << "Seed:                       " << seed << "\n";
     std::cout << "Lambda (block interval):    " << lambda << "s\n";
     std::cout << "Tau (propagation mult.):    " << tau << "\n";
     std::cout << "Txs per block:              " << txsPerBlock << "\n";
@@ -340,9 +380,10 @@ int main(int argc, char *argv[]) {
     std::cout << "Target blocks per miner:    " << targetBlocksPerMiner << "\n";
     std::cout << "Expected total DAG blocks:  "
               << targetBlocksPerMiner * noMiners << "\n";
-    std::cout << "Simulation duration:        " << stop << " minutes\n\n";
+    std::cout << "Mining duration:            " << stop << " minutes\n";
+    std::cout << "Drain window:               " << drainSeconds << " s\n\n";
   }
-  ghostdagMiners.Stop(Minutes(stop));
+  ghostdagMiners.Stop(Minutes(stop + drain));
 
   ApplicationContainer ghostdagNodes;
   for (auto &node : nodesConnections) {
@@ -355,8 +396,7 @@ int main(int argc, char *argv[]) {
             peersDownloadSpeeds[node.first], peersUploadSpeeds[node.first],
             nodesInternetSpeeds[node.first]);
 
-        nodeHelper.SetAttribute("Kghostdag",
-                                UintegerValue(ghostdagK));
+        nodeHelper.SetAttribute("Kghostdag", UintegerValue(ghostdagK));
         nodeHelper.SetAttribute("MempoolSize", UintegerValue(mempoolSize));
         nodeHelper.SetAttribute("TxFeeLambda", DoubleValue(txFeeLambda));
         nodeHelper.SetAttribute("TxGenInterval", DoubleValue(txGenInterval));
@@ -365,6 +405,7 @@ int main(int argc, char *argv[]) {
                                 DoubleValue(snapshotInterval));
         nodeHelper.SetAttribute("InvTimeoutMinutes",
                                 TimeValue(Seconds(invTimeoutSeconds)));
+        nodeHelper.SetAttribute("Seed", UintegerValue(seed));
 
         ghostdagNodes.Add(nodeHelper.Install(targetNode));
       }
@@ -372,7 +413,7 @@ int main(int argc, char *argv[]) {
   }
 
   ghostdagNodes.Start(Seconds(0));
-  ghostdagNodes.Stop(Minutes(stop));
+  ghostdagNodes.Stop(Minutes(stop + drain));
 
   if (systemId == 0) {
     std::cout << "Applications configured and ready.\n";
@@ -383,7 +424,7 @@ int main(int argc, char *argv[]) {
     std::cout << "Setup time = " << tStartSimulation - tStart << "s\n";
   }
 
-  Simulator::Stop(Minutes(stop + 0.1));
+  Simulator::Stop(Minutes(stop + drain + 0.1));
 
   Simulator::Run();
   Simulator::Destroy();

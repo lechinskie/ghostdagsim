@@ -67,7 +67,8 @@ public:
                          uint32_t noMiners, enum Region *minersRegions,
                          int minConnectionsPerNode, int maxConnectionsPerNode,
                          double latencyParetoShapeDivider,
-                         double tau_multiplier, uint32_t systemId);
+                         double tau_multiplier, uint32_t systemId,
+                         uint32_t seed = 0);
   double m_maxDelay;
   ~GhostDagTopologyHelper();
 
@@ -166,6 +167,7 @@ private:
   double m_minerUploadSpeed;          //!< Upload speed for miners (Mbps)
   uint32_t m_totalNoLinks;            //!< Total number of P2P links
   uint32_t m_systemId;                //!< System ID for distributed simulation
+  uint32_t m_seed; //!< Replication seed; 0 = the original topology draw
 
   // Regional configuration
   enum Region *m_minersRegions;   //!< Region assignment for miners

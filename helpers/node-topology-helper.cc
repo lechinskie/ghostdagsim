@@ -41,7 +41,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
     uint32_t noCpus, uint32_t totalNoNodes, uint32_t noMiners,
     enum Region *minersRegions, int minConnectionsPerNode,
     int maxConnectionsPerNode, double latencyParetoShapeDivider,
-    double tau_multiplier, uint32_t systemId)
+    double tau_multiplier, uint32_t systemId, uint32_t seed)
     : m_totalNoNodes(totalNoNodes), m_noMiners(noMiners), m_noCpus(noCpus),
       m_latencyParetoShapeDivider(latencyParetoShapeDivider),
       m_tau_multiplier(tau_multiplier),
@@ -49,7 +49,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
       m_maxConnectionsPerNode(maxConnectionsPerNode),
       m_minConnectionsPerMiner(700), m_maxConnectionsPerMiner(800),
       m_minerDownloadSpeed(100), m_minerUploadSpeed(100), m_totalNoLinks(0),
-      m_systemId(systemId) {
+      m_systemId(systemId), m_seed(seed) {
 
   std::vector<uint32_t> nodes; // nodes contain the ids of the nodes
   double tStart = GetWallTime();
@@ -979,7 +979,11 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
   m_regionUploadSpeeds[ASIA_PACIFIC] = 6.53;
   m_regionUploadSpeeds[JAPAN] = 1.7;
   m_regionUploadSpeeds[AUSTRALIA] = 6.1;
-  srand(1000);
+  // Replication seed (--seed): 0 reproduces the original topology exactly,
+  // srand(1000) for the peer choices and the default-seeded mt19937 (5489)
+  // for regions, bandwidths and connection counts; s > 0 shifts both.
+  srand(1000 + m_seed);
+  m_generator.seed(5489u + m_seed);
 
   // Bounds check
   if (m_noMiners > m_totalNoNodes) {

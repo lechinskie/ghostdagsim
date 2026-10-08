@@ -32,8 +32,8 @@
 #include "ns3/application.h"
 #include "ns3/header.h"
 #include "ns3/ipv4-address.h"
-#include "ns3/ptr.h"
 #include "ns3/packet.h"
+#include "ns3/ptr.h"
 #include "ns3/socket.h"
 #include "ns3/tag.h"
 #include "ns3/traced-callback.h"
@@ -161,8 +161,7 @@ protected:
   uint32_t WireSizeGrapheneBlock(size_t n_parents, size_t n_txs, double fpr,
                                  const IBLT &iblt) const;
   uint32_t WireSizeRecoveryRequest(size_t z, double fpr_r) const;
-  uint32_t WireSizeRecoveryResponse(const IBLT &iblt,
-                                    size_t n_missing) const;
+  uint32_t WireSizeRecoveryResponse(const IBLT &iblt, size_t n_missing) const;
   uint32_t WireSizeTxInv(size_t n_txs) const;
   uint32_t WireSizeTxs(size_t n_txs) const;
   void BroadcastInvBlock(const std::string &block_hash,
@@ -236,7 +235,8 @@ protected:
   std::map<Ptr<Socket>, RxFrameState> m_rx_state;
   // Frames waiting for TCP send-buffer space (send side)
   std::map<Ptr<Socket>, std::deque<Ptr<Packet>>> m_tx_queue;
-  std::map<Ptr<Socket>, uint32_t> m_tx_frame_seq; // per-connection frame counter
+  std::map<Ptr<Socket>, uint32_t>
+      m_tx_frame_seq; // per-connection frame counter
   std::vector<Ptr<Socket>> m_accepted_sockets;
   bool m_running = false;
   std::map<std::string, Block> m_only_headers_received;
@@ -248,6 +248,8 @@ protected:
   // --- Port / Sizes ---
   int m_ghostdag_port;
   uint32_t m_ghostdag_k;
+  uint32_t
+      m_seed; //!< replication seed mixed into m_generator (0 = node id only)
   int m_seconds_per_min;
   int m_message_header_size;
   int m_inventory_size;

@@ -52,11 +52,15 @@ protected:
 
   void ScheduleNextMiningEvent();
   void MineBlock();
+  void StopMining();
 
   std::set<Transaction> SelectTransactions(uint64_t bid);
 
   double m_blockGenInterval;
   EventId m_nextMiningEvent;
+  Time m_miningDuration; //!< stop mining this long after start (0 = keep
+                         //!< mining until the application stops)
+  EventId m_stopMiningEvent;
 
   int m_txsPerBlock;
   int m_txSelectionStrategy;

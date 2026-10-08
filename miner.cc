@@ -29,6 +29,7 @@
 #include "metrics.h"
 
 #include "ns3/double.h"
+#include "ns3/nstime.h"
 #include "ns3/simulator.h"
 #include "ns3/tcp-socket-factory.h"
 #include "ns3/uinteger.h"
@@ -53,6 +54,13 @@ TypeId GhostDagMiner::GetTypeId() {
                         DoubleValue(20.0),
                         MakeDoubleAccessor(&GhostDagMiner::m_blockGenInterval),
                         MakeDoubleChecker<double>())
+          .AddAttribute("MiningDuration",
+                        "Stop mining this long after the application starts, "
+                        "while it keeps relaying until it stops (0 = mine "
+                        "until the application stops)",
+                        TimeValue(Seconds(0)),
+                        MakeTimeAccessor(&GhostDagMiner::m_miningDuration),
+                        MakeTimeChecker())
           .AddAttribute("TxsPerBlock", "Number of transactions per block",
                         UintegerValue(100),
                         MakeUintegerAccessor(&GhostDagMiner::m_txsPerBlock),
@@ -67,9 +75,9 @@ TypeId GhostDagMiner::GetTypeId() {
 }
 
 GhostDagMiner::GhostDagMiner()
-    : m_blockGenInterval(20.0), m_txsPerBlock(100), m_txSelectionStrategy(0),
-      m_minerGeneratedBlocks(0), m_previousBlockGenerationTime(0.0),
-      m_averageBlockGenInterval(0.0) {
+    : m_blockGenInterval(20.0), m_miningDuration(Seconds(0)),
+      m_txsPerBlock(100), m_txSelectionStrategy(0), m_minerGeneratedBlocks(0),
+      m_previousBlockGenerationTime(0.0), m_averageBlockGenInterval(0.0) {
   NS_LOG_FUNCTION(this);
   m_generateTransactions = false;
 }
@@ -101,6 +109,9 @@ void GhostDagMiner::DoDispose() {
   if (m_nextMiningEvent.IsPending()) {
     Simulator::Cancel(m_nextMiningEvent);
   }
+  if (m_stopMiningEvent.IsPending()) {
+    Simulator::Cancel(m_stopMiningEvent);
+  }
   GhostDagNode::DoDispose();
 }
 
@@ -117,6 +128,25 @@ void GhostDagMiner::StartApplication() {
                        << (m_txSelectionStrategy == 0 ? "RANDOM" : "RATIONAL"));
 
   ScheduleNextMiningEvent();
+
+  if (m_miningDuration.IsStrictlyPositive()) {
+    m_stopMiningEvent =
+        Simulator::Schedule(m_miningDuration, &GhostDagMiner::StopMining, this);
+  }
+}
+
+// Ends block production but not the application: the miner keeps receiving and
+// relaying, so blocks still in flight can finish propagating before the
+// application stops.
+void GhostDagMiner::StopMining() {
+  NS_LOG_FUNCTION(this);
+
+  if (m_nextMiningEvent.IsPending()) {
+    Simulator::Cancel(m_nextMiningEvent);
+  }
+
+  NS_LOG_WARN("Miner " << GetNode()->GetId() << " stopped mining after "
+                       << m_minerGeneratedBlocks << " blocks");
 }
 
 void GhostDagMiner::StopApplication() {
@@ -124,6 +154,9 @@ void GhostDagMiner::StopApplication() {
 
   if (m_nextMiningEvent.IsPending()) {
     Simulator::Cancel(m_nextMiningEvent);
+  }
+  if (m_stopMiningEvent.IsPending()) {
+    Simulator::Cancel(m_stopMiningEvent);
   }
 
   NS_LOG_WARN("Miner " << GetNode()->GetId() << " generated "
@@ -181,8 +214,7 @@ void GhostDagMiner::MineBlock() {
   }
 
   NS_LOG_INFO("Miner " << minerId << " mined block " << newBlock.header.block_id
-                       << " with " << newBlock.tx_count()
-                       << " transactions, "
+                       << " with " << newBlock.tx_count() << " transactions, "
                        << newBlock.header.parent_hashes.size() << " parents");
 
   std::string blockHash = std::to_string(newBlock.header.block_id);
