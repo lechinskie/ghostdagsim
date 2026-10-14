@@ -30,6 +30,9 @@
 #include "ns3/random-variable-stream.h"
 #include "ns3/string.h"
 #include "ns3/vector.h"
+#include <algorithm>
+#include <numeric>
+#include <stdexcept>
 #include <sys/time.h>
 
 static double GetWallTime();
@@ -37,11 +40,65 @@ namespace ns3 {
 
 NS_LOG_COMPONENT_DEFINE("GhostDagTopologyHelper");
 
+std::vector<uint32_t> BuildDegreeBalancedSystemAssignment(
+    const std::map<uint32_t, std::vector<uint32_t>> &connections,
+    uint32_t totalNoNodes, uint32_t noCpus) {
+  if (noCpus == 0) {
+    throw std::invalid_argument("MPI placement requires at least one system");
+  }
+
+  std::vector<uint32_t> order(totalNoNodes);
+  std::iota(order.begin(), order.end(), 0);
+  auto degree = [&](uint32_t nodeId) -> uint64_t {
+    auto it = connections.find(nodeId);
+    return it == connections.end() ? 0 : it->second.size();
+  };
+
+  std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+    const uint64_t da = degree(a);
+    const uint64_t db = degree(b);
+    return da != db ? da > db : a < b;
+  });
+
+  std::vector<uint32_t> capacity(noCpus, totalNoNodes / noCpus);
+  for (uint32_t rank = 0; rank < totalNoNodes % noCpus; ++rank) {
+    ++capacity[rank];
+  }
+
+  std::vector<uint32_t> count(noCpus, 0);
+  std::vector<uint64_t> load(noCpus, 0);
+  std::vector<uint32_t> assignment(totalNoNodes, 0);
+
+  for (uint32_t nodeId : order) {
+    uint32_t best = noCpus;
+    for (uint32_t rank = 0; rank < noCpus; ++rank) {
+      if (count[rank] >= capacity[rank]) {
+        continue;
+      }
+      if (best == noCpus || load[rank] < load[best] ||
+          (load[rank] == load[best] && count[rank] < count[best]) ||
+          (load[rank] == load[best] && count[rank] == count[best] &&
+           rank < best)) {
+        best = rank;
+      }
+    }
+    if (best == noCpus) {
+      throw std::logic_error("MPI placement exhausted rank capacity");
+    }
+    assignment[nodeId] = best;
+    ++count[best];
+    load[best] += degree(nodeId);
+  }
+
+  return assignment;
+}
+
 GhostDagTopologyHelper::GhostDagTopologyHelper(
     uint32_t noCpus, uint32_t totalNoNodes, uint32_t noMiners,
     enum Region *minersRegions, int minConnectionsPerNode,
     int maxConnectionsPerNode, double latencyParetoShapeDivider,
-    double tau_multiplier, uint32_t systemId, uint32_t seed)
+    double tau_multiplier, uint32_t systemId, uint32_t seed,
+    const std::string &mpiPartition)
     : m_totalNoNodes(totalNoNodes), m_noMiners(noMiners), m_noCpus(noCpus),
       m_latencyParetoShapeDivider(latencyParetoShapeDivider),
       m_tau_multiplier(tau_multiplier),
@@ -49,7 +106,7 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
       m_maxConnectionsPerNode(maxConnectionsPerNode),
       m_minConnectionsPerMiner(700), m_maxConnectionsPerMiner(800),
       m_minerDownloadSpeed(100), m_minerUploadSpeed(100), m_totalNoLinks(0),
-      m_systemId(systemId), m_seed(seed) {
+      m_systemId(systemId), m_seed(seed), m_mpiPartition(mpiPartition) {
 
   std::vector<uint32_t> nodes; // nodes contain the ids of the nodes
   double tStart = GetWallTime();
@@ -1268,10 +1325,25 @@ GhostDagTopologyHelper::GhostDagTopologyHelper(
   PointToPointHelper pointToPoint;
 
   tStart = GetWallTime();
+
+  // SystemId is execution placement only. Keep round-robin as the default;
+  // degree-balanced preserves node IDs and the already-generated topology.
+  std::vector<uint32_t> systemAssignment(m_totalNoNodes);
+  if (m_mpiPartition == "round-robin") {
+    for (uint32_t i = 0; i < m_totalNoNodes; ++i) {
+      systemAssignment[i] = i % m_noCpus;
+    }
+  } else if (m_mpiPartition == "degree-balanced") {
+    systemAssignment = BuildDegreeBalancedSystemAssignment(
+        m_nodesConnections, m_totalNoNodes, m_noCpus);
+  } else {
+    throw std::invalid_argument("unknown MPI partition mode: " + m_mpiPartition);
+  }
+
   // Create the bitcoin nodes
   for (uint32_t i = 0; i < m_totalNoNodes; i++) {
     NodeContainer currentNode;
-    currentNode.Create(1, i % m_noCpus);
+    currentNode.Create(1, systemAssignment[i]);
 
     m_nodes.push_back(currentNode);
     AssignRegion(i);

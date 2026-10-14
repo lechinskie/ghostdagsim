@@ -18,10 +18,14 @@
 //  (I15) SelectTip returns highest blue_score tip; lower id breaks ties
 
 #include "../dag.h"
+#include "../helpers/node-topology-helper.h"
 #include "../metrics.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -702,4 +706,62 @@ TEST_F(GHOSTDAGTest, GlobalInvariants_ComplexDAG) {
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
+}
+
+
+/* Execution-only MPI placement tests. */
+TEST(MpiPlacementTest,
+     DegreeBalancedIsDeterministicCapacityConstrainedAndBalancesDegree) {
+  std::map<uint32_t, std::vector<uint32_t>> connections;
+  const std::vector<uint32_t> degrees{100, 90, 80, 70, 1, 1, 1, 1};
+  for (uint32_t node = 0; node < degrees.size(); ++node) {
+    connections[node] = std::vector<uint32_t>(degrees[node], 0);
+  }
+
+  const auto first =
+      ns3::BuildDegreeBalancedSystemAssignment(connections, 8, 2);
+  const auto second =
+      ns3::BuildDegreeBalancedSystemAssignment(connections, 8, 2);
+  EXPECT_EQ(first, second);
+  ASSERT_EQ(first.size(), 8u);
+
+  std::array<uint32_t, 2> counts{0, 0};
+  std::array<uint64_t, 2> loads{0, 0};
+  for (uint32_t node = 0; node < first.size(); ++node) {
+    ASSERT_LT(first[node], 2u);
+    ++counts[first[node]];
+    loads[first[node]] += degrees[node];
+  }
+  EXPECT_EQ(counts[0], 4u);
+  EXPECT_EQ(counts[1], 4u);
+  EXPECT_EQ(loads[0], loads[1]);
+
+  const uint64_t roundRobin0 =
+      degrees[0] + degrees[2] + degrees[4] + degrees[6];
+  const uint64_t roundRobin1 =
+      degrees[1] + degrees[3] + degrees[5] + degrees[7];
+  EXPECT_LT(std::max(loads[0], loads[1]) - std::min(loads[0], loads[1]),
+            std::max(roundRobin0, roundRobin1) -
+                std::min(roundRobin0, roundRobin1));
+}
+
+TEST(MpiPlacementTest, DegreeBalancedPreservesEqualNodeCapacityForMpi4) {
+  std::map<uint32_t, std::vector<uint32_t>> connections;
+  for (uint32_t node = 0; node < 1000; ++node) {
+    const uint32_t degree = (node < 10) ? 700 + node : 8 + (node % 9);
+    connections[node] = std::vector<uint32_t>(degree, 0);
+  }
+
+  const auto assignment =
+      ns3::BuildDegreeBalancedSystemAssignment(connections, 1000, 4);
+  std::array<uint32_t, 4> counts{0, 0, 0, 0};
+  for (uint32_t rank : assignment) {
+    ASSERT_LT(rank, 4u);
+    ++counts[rank];
+  }
+
+  EXPECT_EQ(counts[0], 250u);
+  EXPECT_EQ(counts[1], 250u);
+  EXPECT_EQ(counts[2], 250u);
+  EXPECT_EQ(counts[3], 250u);
 }
